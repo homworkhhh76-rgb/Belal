@@ -32,3 +32,65 @@
 .receipt-action-btn{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.btn-whatsapp{background:#25D366;color:#fff;border-color:#25D366}.btn-whatsapp:hover{filter:brightness(.96)}.receipt-ready-card{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.receipt-ready-card>div{background:var(--surface-2);border:1px solid var(--border);border-radius:13px;padding:12px}.receipt-ready-card small{display:block;color:var(--muted);font-size:10px;margin-bottom:5px}.receipt-ready-card strong{font-size:13px}.receipt-note{margin-top:14px}
 @media(max-width:1050px){.projects-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:620px){.projects-summary-grid{grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.project-total-card{padding:12px;border-radius:15px}.project-total-head{align-items:flex-start;flex-direction:column;gap:5px}.project-total-head span{font-size:12px}.project-total-head strong{font-size:8px}.project-total-row{align-items:flex-start;flex-direction:column;gap:2px;padding:5px 0}.project-total-row strong{font-size:11px;max-width:100%;white-space:normal;word-break:break-word}.project-total-card>small{font-size:8px}.receipt-ready-card{grid-template-columns:1fr}.modal-foot #receiptDownloadBtn,.modal-foot #receiptShareBtn,.modal-foot #receiptWhatsappBtn{flex:1 1 100%;width:100%}.receipt-action-btn span{display:none}}
+
+
+/* ===== v8: Mobile buildings + high-refresh motion polish ===== */
+html,body{width:100%;max-width:100%;overflow-x:hidden;overscroll-behavior-y:none}
+body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+.main,.content,.view,.cards-grid,.entity-card,.section-actions,.section-actions>*{min-width:0}
+button,.btn,.nav-link,.icon-btn{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.table-wrap{-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+
+/* Only animate compositor-friendly properties to stay smooth on 90/120Hz screens. */
+.view.active{animation:viewEnter .24s cubic-bezier(.2,.75,.25,1);will-change:transform,opacity}
+@keyframes viewEnter{from{opacity:0;transform:translate3d(0,7px,0)}to{opacity:1;transform:translate3d(0,0,0)}}
+.sidebar{will-change:transform;transition:transform .26s cubic-bezier(.2,.8,.2,1)}
+.btn,.nav-link,.icon-btn,.entity-card,.stat-card,.project-money-card,.project-total-card{transition:transform .16s cubic-bezier(.2,.8,.2,1),box-shadow .16s ease,border-color .16s ease,background-color .16s ease,color .16s ease}
+.btn:active,.icon-btn:active{transform:scale(.975)}
+
+.modal-backdrop{animation:backdropSmoothIn .2s cubic-bezier(.2,.8,.2,1);will-change:opacity}
+.modal{animation:modalSmoothIn .26s cubic-bezier(.16,1,.3,1);will-change:transform,opacity;transform:translateZ(0);backface-visibility:hidden}
+.modal-backdrop.is-closing{animation:backdropSmoothOut .18s ease forwards;pointer-events:none}
+.modal.is-closing{animation:modalSmoothOut .18s cubic-bezier(.4,0,1,1) forwards}
+@keyframes backdropSmoothIn{from{opacity:0}to{opacity:1}}
+@keyframes backdropSmoothOut{from{opacity:1}to{opacity:0}}
+@keyframes modalSmoothIn{from{opacity:0;transform:translate3d(0,22px,0) scale(.982)}to{opacity:1;transform:translate3d(0,0,0) scale(1)}}
+@keyframes modalSmoothOut{from{opacity:1;transform:translate3d(0,0,0) scale(1)}to{opacity:0;transform:translate3d(0,16px,0) scale(.988)}}
+.toast{will-change:transform,opacity;transform:translateZ(0)}
+.toast.toast-out{animation:toastSmoothOut .18s ease forwards}
+@keyframes toastSmoothOut{to{opacity:0;transform:translate3d(-12px,0,0)}}
+
+/* العقارات - الهاتف */
+@media(max-width:620px){
+  #view-buildings{width:100%}
+  #view-buildings .buildings-actions{display:grid;grid-template-columns:1fr;gap:10px;width:100%;margin-bottom:12px}
+  #view-buildings .search-box{width:100%;max-width:none;min-width:0;height:48px;border-radius:14px}
+  #view-buildings #addBuildingBtn{width:100%;min-height:48px;border-radius:14px}
+  #view-buildings #buildingsCards{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;width:100%}
+  #view-buildings .entity-card{width:100%;max-width:100%;padding:14px;border-radius:16px;overflow:hidden}
+  #view-buildings .entity-head{align-items:center}
+  #view-buildings .entity-icon{width:44px;height:44px;border-radius:13px}
+  #view-buildings .entity-card h3{font-size:16px;margin-top:10px;overflow-wrap:anywhere}
+  #view-buildings .entity-card p{font-size:11px;overflow-wrap:anywhere}
+  #view-buildings .entity-meta{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:11px 0}
+  #view-buildings .meta-chip{min-width:0;padding:9px 8px}
+  #view-buildings .meta-chip strong{font-size:12px;overflow-wrap:anywhere}
+  #view-buildings .card-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;padding-top:10px}
+  #view-buildings .card-actions .btn{width:100%;min-width:0;min-height:42px;padding:8px 10px}
+  .modal-backdrop{backdrop-filter:none;-webkit-backdrop-filter:none;background:rgba(7,19,33,.56)}
+  .modal,.modal-lg{overflow:hidden;display:flex;flex-direction:column;max-height:calc(100dvh - env(safe-area-inset-top,0px));border-radius:22px 22px 0 0}
+  .modal form{min-height:0;display:flex;flex-direction:column;flex:1}
+  .modal-body{min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+  .modal-foot{flex-wrap:wrap;padding-bottom:calc(15px + env(safe-area-inset-bottom,0px))}
+  .input,.select,.textarea,.search-box input{font-size:16px}
+}
+
+@media(max-width:380px){
+  #view-buildings .entity-meta{grid-template-columns:1fr}
+  #view-buildings .card-actions{grid-template-columns:1fr}
+}
+
+/* Respect accessibility settings and avoid burning battery when motion is disabled. */
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}

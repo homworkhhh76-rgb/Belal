@@ -174,7 +174,7 @@
     const labels = {success:'تم بنجاح',error:'تنبيه',info:'معلومة'};
     item.innerHTML = `<div class="toast-icon">${type==='success'?'✓':type==='error'?'!':'i'}</div><div><strong>${escapeHtml(title || labels[type] || '')}</strong><span>${escapeHtml(message)}</span></div><button type="button" aria-label="إغلاق">×</button>`;
     root.appendChild(item);
-    const close = () => { item.style.opacity='0'; setTimeout(()=>item.remove(),180); };
+    const close = () => { if(!item.isConnected)return; item.classList.add('toast-out'); setTimeout(()=>item.remove(),190); };
     $('button',item).addEventListener('click',close);
     setTimeout(close, 4200);
   }
@@ -183,7 +183,15 @@
     const root = $('#modalRoot');
     root.innerHTML = `<div class="modal-backdrop" id="modalBackdrop"><div class="modal ${size==='lg'?'modal-lg':''}" role="dialog" aria-modal="true"><div class="modal-head"><div class="modal-title"><div class="title-icon"><svg class="icon"><use href="#${icon}"/></svg></div><div><h3>${escapeHtml(title)}</h3>${subtitle?`<p>${escapeHtml(subtitle)}</p>`:''}</div></div><button class="icon-btn" id="modalClose" type="button"><svg class="icon"><use href="#i-close"/></svg></button></div><form id="modalForm"><div class="modal-body">${body}</div><div class="modal-foot">${hideSubmit?'':`<button class="btn btn-primary" type="submit">${escapeHtml(submitText)}</button>`}<button class="btn btn-ghost" type="button" id="modalCancel">إلغاء</button>${extraFooter}</div></form></div></div>`;
     const backdrop = $('#modalBackdrop');
-    const close = () => root.innerHTML = '';
+    let closing = false;
+    const close = () => {
+      if (closing || !backdrop?.isConnected) return;
+      closing = true;
+      backdrop.classList.add('is-closing');
+      const modal = $('.modal', backdrop);
+      if (modal) modal.classList.add('is-closing');
+      window.setTimeout(() => { if (root.contains(backdrop)) root.innerHTML = ''; }, 190);
+    };
     $('#modalClose').addEventListener('click', close);
     $('#modalCancel').addEventListener('click', close);
     backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
@@ -864,7 +872,7 @@ ${state.settings.companyName}`;
     $('#clearDataBtn').addEventListener('click',()=>confirmAction({title:'مسح جميع البيانات',message:'هذا الإجراء يحذف جميع المشاريع والعقارات والمستأجرين والحركات والديون من هذا المتصفح.',confirmText:'مسح نهائي',onConfirm:()=>{state=cloneDefaults();saveState();toast('تم مسح البيانات.','info');}}));
     window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstallPrompt=e;});
     window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;toast('تم تثبيت التطبيق على الجهاز.');});
-    document.addEventListener('keydown',e=>{if(e.key==='Escape'){if($('#modalBackdrop'))$('#modalRoot').innerHTML='';else closeSidebar();}});
+    document.addEventListener('keydown',e=>{if(e.key==='Escape'){const closeBtn=$('#modalClose');if(closeBtn)closeBtn.click();else closeSidebar();}});
   }
 
   function initPwa() {

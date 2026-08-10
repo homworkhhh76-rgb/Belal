@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shahd-accounting-v7-project-cards-receipts';
+const CACHE_NAME = 'shahd-accounting-v8-mobile-120hz';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './manifest.webmanifest',
   './shahd-logo.jpg', './icon-192.png', './icon-512.png'
