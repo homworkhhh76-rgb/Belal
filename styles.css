@@ -94,3 +94,22 @@ button,.btn,.nav-link,.icon-btn{-webkit-tap-highlight-color:transparent;touch-ac
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
+
+
+/* ===== v9: reliable mobile vertical scrolling + arrears contact actions ===== */
+.arrears-contact-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.arrears-contact-actions .btn[disabled]{opacity:.45;cursor:not-allowed;filter:grayscale(.35)}
+@media(max-width:900px){
+  html,body{height:100%;min-height:100%;overflow:hidden!important;overscroll-behavior:auto!important}
+  body{position:relative;touch-action:pan-x pan-y pinch-zoom}
+  .app-shell{height:100dvh;min-height:100dvh;overflow:hidden}
+  .main{height:100dvh;min-height:0;overflow-y:auto!important;overflow-x:hidden!important;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;scroll-behavior:smooth;touch-action:pan-x pan-y pinch-zoom}
+  .content{min-height:calc(100dvh - 68px);overflow:visible!important;padding-bottom:calc(44px + env(safe-area-inset-bottom,0px))}
+  .view.active{overflow:visible}
+}
+@media(max-width:620px){
+  #view-dashboard{padding-bottom:16px}
+  #view-dashboard .hero-card,#view-dashboard .stats-grid,#view-dashboard .grid-2,#view-dashboard .panel{transform:translateZ(0)}
+  .arrears-contact-actions{min-width:150px;display:grid;grid-template-columns:1fr 1fr}
+  .arrears-contact-actions [data-pay-arrears]{grid-column:1/-1}
+  .arrears-contact-actions .btn{width:100%;white-space:normal;line-height:1.35}
+}

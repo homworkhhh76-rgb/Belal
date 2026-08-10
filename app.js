@@ -250,7 +250,12 @@
     if(view==='project-details'){const p=projectById(activeProjectId);if(p){$('#pageTitle').textContent=p.name;$('#pageSubtitle').textContent='إدارة مالية مستقلة للمشروع';}}
     closeSidebar();
     renderAll();
-    window.scrollTo({top:0,behavior:'smooth'});
+    const mainScroller=$('.main');
+    if(mainScroller && mainScroller.scrollHeight>mainScroller.clientHeight){
+      mainScroller.scrollTo({top:0,behavior:'smooth'});
+    } else {
+      window.scrollTo({top:0,behavior:'smooth'});
+    }
   }
   function openSidebar(){ $('#sidebar').classList.add('open'); $('#sidebarOverlay').classList.add('show'); }
   function closeSidebar(){ $('#sidebar').classList.remove('open'); $('#sidebarOverlay').classList.remove('show'); }
@@ -491,7 +496,44 @@
     const buildingFilter=$('#arrearsBuildingFilter')?.value||'';
     const rows=state.tenants.filter(t=>!buildingFilter||t.buildingId===buildingFilter).map(t=>({tenant:t,...calculateTenantArrears(t,cutoff)})).filter(x=>x.due>0n);
     $('#arrearsSummary').innerHTML=CURRENCIES.map(c=>{const same=rows.filter(r=>r.currency===c);const total=same.reduce((s,r)=>s+r.due,0n);return `<div class="mini-card"><small>${CURRENCY_META[c].label} متأخر</small><strong>${formatMoney(total,c,true)}</strong><div class="stat-note">${same.length} مستأجر</div></div>`}).join('');
-    $('#arrearsTable').innerHTML=rows.length?`<table><thead><tr><th>المستأجر</th><th>العقار</th><th>قيمة الإيجار</th><th>بداية العقد</th><th>نهاية العقد</th><th>الأشهر المطلوبة</th><th>عدد الأشهر</th><th>المستحق</th><th>إجراء</th></tr></thead><tbody>${rows.map(r=>{const t=r.tenant,b=buildingById(t.buildingId);return `<tr><td><strong>${escapeHtml(t.name)}</strong><br><small>${escapeHtml(t.phone||'')}</small></td><td>${escapeHtml(b?.name||'—')}</td><td>${formatMoney(t.rentAmount,t.rentCurrency)}</td><td>${monthLabel(t.startMonth)}</td><td>${monthLabel(r.contractEnd)}</td><td><div class="month-chips">${r.months.map(x=>`<span class="month-chip">${monthLabel(x.month)} — ${formatMoney(x.due,r.currency,true)}</span>`).join('')}</div></td><td><span class="badge badge-red">${r.months.length} شهر</span></td><td><strong class="money-out">${formatMoney(r.due,r.currency,true)}</strong></td><td><button class="btn btn-primary btn-sm" data-pay-arrears="${t.id}" data-first-month="${r.months[0]?.month||''}">تسجيل دفعة</button></td></tr>`}).join('')}</tbody></table>`:`<div class="empty">لا توجد متأخرات حتى ${monthLabel(cutoff)}.</div>`;
+    $('#arrearsTable').innerHTML=rows.length?`<table><thead><tr><th>المستأجر</th><th>العقار</th><th>قيمة الإيجار</th><th>بداية العقد</th><th>نهاية العقد</th><th>الأشهر المطلوبة</th><th>عدد الأشهر</th><th>المستحق</th><th>إجراءات التواصل</th></tr></thead><tbody>${rows.map(r=>{const t=r.tenant,b=buildingById(t.buildingId),hasPhone=!!String(t.phone||'').trim();return `<tr><td><strong>${escapeHtml(t.name)}</strong><br><small>${escapeHtml(t.phone||'بدون رقم')}</small></td><td>${escapeHtml(b?.name||'—')}</td><td>${formatMoney(t.rentAmount,t.rentCurrency)}</td><td>${monthLabel(t.startMonth)}</td><td>${monthLabel(r.contractEnd)}</td><td><div class="month-chips">${r.months.map(x=>`<span class="month-chip">${monthLabel(x.month)} — ${formatMoney(x.due,r.currency,true)}</span>`).join('')}</div></td><td><span class="badge badge-red">${r.months.length} شهر</span></td><td><strong class="money-out">${formatMoney(r.due,r.currency,true)}</strong></td><td><div class="actions arrears-contact-actions"><button class="btn btn-primary btn-sm" data-pay-arrears="${t.id}" data-first-month="${r.months[0]?.month||''}">تسجيل دفعة</button><button class="btn btn-whatsapp btn-sm" data-arrears-whatsapp="${t.id}" ${hasPhone?'':'disabled'}>واتساب</button><button class="btn btn-ghost btn-sm" data-arrears-sms="${t.id}" ${hasPhone?'':'disabled'}>رسالة جوال</button></div></td></tr>`}).join('')}</tbody></table>`:`<div class="empty">لا توجد متأخرات حتى ${monthLabel(cutoff)}.</div>`;
+  }
+
+  function tenantArrearsMessage(tenantId) {
+    const t=tenantById(tenantId); if(!t)return '';
+    const cutoff=$('#arrearsCutoff')?.value||currentMonth();
+    const a=calculateTenantArrears(t,cutoff);
+    const b=buildingById(t.buildingId);
+    const firstDueMonth=a.months[0]?.month||cutoff;
+    const dueDay=Math.min(28,Math.max(1,Number(state.settings.rentDueDay||1)));
+    const [dueYear,dueMonth]=String(firstDueMonth).split('-');
+    const dueDate=(dueYear&&dueMonth)?`${dueYear}/${dueMonth}/${String(dueDay).padStart(2,'0')}`:'—';
+    const unitText=String(t.direction||'').trim();
+    const buildingText=String(b?.name||'').trim();
+    const rentalPlace=unitText&&buildingText?`عن الشقة ${unitText} من عمارة ${buildingText}`:buildingText?`عن الشقة في عمارة ${buildingText}`:unitText?`عن الشقة ${unitText}`:'عن الوحدة المؤجرة';
+    const currencyLabel=CURRENCY_META[a.currency]?.label||a.currency||'';
+    return `السيد/ة ${t.name} المحترم،
+تحية طيبة،
+نحيطكم علماً بأنه قد حان موعد سداد الدفعة الإيجارية المستحقة ${rentalPlace} بقيمة ${formatMoney(a.due,a.currency,true)}${currencyLabel?` ${currencyLabel}`:''}، والمستحقة بتاريخ ${dueDate}.
+يرجى العمل على تسوية الرصيد في أقرب وقت لتحديث سجلاتكم المالية لدينا.
+
+باحترام،
+إدارة شركة شهد للتجارة العامة والمقاولات`;
+  }
+
+  function sendArrearsWhatsApp(tenantId) {
+    const t=tenantById(tenantId); if(!t)return;
+    const number=normalizeWhatsAppNumber(t.phone||'');
+    if(!number){toast('لا يوجد رقم جوال محفوظ لهذا المستأجر.','error');return;}
+    window.open(`https://wa.me/${number}?text=${encodeURIComponent(tenantArrearsMessage(tenantId))}`,'_blank','noopener');
+  }
+
+  function sendArrearsSms(tenantId) {
+    const t=tenantById(tenantId); if(!t)return;
+    const phone=String(t.phone||'').trim().replace(/[^0-9+]/g,'');
+    if(!phone){toast('لا يوجد رقم جوال محفوظ لهذا المستأجر.','error');return;}
+    const separator=/iPhone|iPad|iPod/i.test(navigator.userAgent)?'&':'?';
+    window.location.href=`sms:${phone}${separator}body=${encodeURIComponent(tenantArrearsMessage(tenantId))}`;
   }
 
   function debtPaidUnits(debt) {
@@ -754,14 +796,25 @@ ${state.settings.companyName}`;
     return p;
   }
 
-  function sendReceiptWhatsApp(movementId) {
+  async function sendReceiptWhatsApp(movementId) {
     const m=state.movements.find(x=>x.id===movementId); if(!m)return;
     const tenant=tenantById(m.tenantId);
     const number=normalizeWhatsAppNumber(tenant?.phone||'');
-    const text=encodeURIComponent(receiptText(movementId));
-    const url=number?`https://wa.me/${number}?text=${text}`:`https://wa.me/?text=${text}`;
-    window.open(url,'_blank','noopener');
-    if(!number) toast('لا يوجد رقم واتساب محفوظ للمستأجر؛ تم فتح واتساب بدون تحديد مستلم.','info');
+    if(!number){toast('لا يوجد رقم واتساب محفوظ للمستأجر. أضف رقم الجوال أولاً.','error');return;}
+    // افتح نافذة فوراً للحفاظ على صلاحية فتح واتساب بعد تجهيز الصورة.
+    const popup=window.open('about:blank','_blank');
+    try{
+      const receipt=await buildReceiptJpg(movementId);
+      if(receipt){
+        downloadBlob(receipt.blob,receipt.fileName);
+      }
+      const url=`https://wa.me/${number}?text=${encodeURIComponent(receiptText(movementId))}`;
+      if(popup) popup.location.href=url; else window.location.href=url;
+      toast('تم تجهيز صورة السند وفتح واتساب المستأجر. أرفق صورة السند التي تم تنزيلها.','info');
+    }catch(e){
+      if(popup) popup.close();
+      toast('تعذر تجهيز سند القبض.','error');
+    }
   }
 
   async function shareReceiptJpg(movementId) {
@@ -786,8 +839,8 @@ ${state.settings.companyName}`;
       title:'سند القبض جاهز',
       subtitle:tenant?`${tenant.name}${tenant.phone?` — ${tenant.phone}`:''}`:'يمكن تنزيل السند أو مشاركته',
       icon:'i-receipt',hideSubmit:true,
-      body:`<div class="receipt-ready-card"><div><small>رقم السند</small><strong>${escapeHtml(m.receiptNo||m.id)}</strong></div><div><small>المبلغ المقبوض</small><strong class="money-in">${escapeHtml(amounts||'—')}</strong></div><div><small>التاريخ</small><strong>${dateLabel(m.date)}</strong></div></div><div class="form-note receipt-note">يمكنك تنزيل صورة JPG، أو مشاركتها من الهاتف مباشرة عبر قائمة المشاركة. زر واتساب يفتح محادثة رقم المستأجر المحفوظ مع تفاصيل السند.</div>`,
-      extraFooter:`<button class="btn btn-primary" type="button" id="receiptDownloadBtn"><svg class="icon"><use href="#i-download"/></svg>JPG</button><button class="btn btn-primary" type="button" id="receiptShareBtn"><svg class="icon"><use href="#i-share"/></svg>مشاركة الصورة</button><button class="btn btn-whatsapp" type="button" id="receiptWhatsappBtn">واتساب</button>`
+      body:`<div class="receipt-ready-card"><div><small>رقم السند</small><strong>${escapeHtml(m.receiptNo||m.id)}</strong></div><div><small>المبلغ المقبوض</small><strong class="money-in">${escapeHtml(amounts||'—')}</strong></div><div><small>التاريخ</small><strong>${dateLabel(m.date)}</strong></div></div><div class="form-note receipt-note">زر «واتساب المستأجر» يجهّز صورة JPG للسند ثم يفتح محادثة رقم المستأجر مباشرة مع نص السند. بسبب حماية واتساب والمتصفح، إرفاق الصورة نفسها داخل المحادثة يحتاج منك اختيار ملف السند بعد فتح واتساب. زر «مشاركة الصورة» يرسل ملف JPG عبر قائمة المشاركة في الهاتف.</div>`,
+      extraFooter:`<button class="btn btn-primary" type="button" id="receiptDownloadBtn"><svg class="icon"><use href="#i-download"/></svg>JPG</button><button class="btn btn-primary" type="button" id="receiptShareBtn"><svg class="icon"><use href="#i-share"/></svg>مشاركة الصورة</button><button class="btn btn-whatsapp" type="button" id="receiptWhatsappBtn">واتساب المستأجر</button>`
     });
     $('#receiptDownloadBtn',form)?.addEventListener('click',()=>exportReceiptJpg(movementId));
     $('#receiptShareBtn',form)?.addEventListener('click',()=>shareReceiptJpg(movementId));
@@ -846,6 +899,8 @@ ${state.settings.companyName}`;
       const dt=e.target.closest('[data-delete-tenant]');if(dt)deleteTenant(dt.dataset.deleteTenant);
       const pt=e.target.closest('[data-pay-tenant]');if(pt)openMovementModal(null,{type:'rent',tenantId:pt.dataset.payTenant});
       const pa=e.target.closest('[data-pay-arrears]');if(pa)openMovementModal(null,{type:'rent',tenantId:pa.dataset.payArrears,rentMonth:pa.dataset.firstMonth});
+      const aw=e.target.closest('[data-arrears-whatsapp]');if(aw)sendArrearsWhatsApp(aw.dataset.arrearsWhatsapp);
+      const as=e.target.closest('[data-arrears-sms]');if(as)sendArrearsSms(as.dataset.arrearsSms);
       const em=e.target.closest('[data-edit-movement]');if(em){const m=state.movements.find(x=>x.id===em.dataset.editMovement);if(m?.debtPaymentId)toast('هذه الحركة مرتبطة بدين. عدّل الدين أو سجّل العملية من شاشة الديون.','info');else openMovementModal(em.dataset.editMovement);}
       const dm=e.target.closest('[data-delete-movement]');if(dm){const m=state.movements.find(x=>x.id===dm.dataset.deleteMovement);if(m?.debtPaymentId)toast('هذه الحركة مرتبطة بسداد/تحصيل دين ولا تُحذف منفردة للحفاظ على دقة الحسابات.','error');else deleteMovement(dm.dataset.deleteMovement);}
       const rc=e.target.closest('[data-receipt]');if(rc)openReceiptActions(rc.dataset.receipt);
