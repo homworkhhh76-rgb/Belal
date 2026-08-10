@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b4d8f" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="شهد للحسابات" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css?v=7" />
+  <title>شهد | إدارة العقارات والحسابات</title>
+</head>
+<body>
+  <svg class="svg-sprite" aria-hidden="true">
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-building" viewBox="0 0 24 24"><path d="M4 21V4h10v17M14 9h6v12M7 7h2M11 7h1M7 11h2M11 11h1M7 15h2M11 15h1M17 12h1M17 16h1M2 21h20"/></symbol>
+    <symbol id="i-project" viewBox="0 0 24 24"><path d="M4 7h16v13H4zM8 7V4h8v3M4 11h16M10 11v2h4v-2"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-swap" viewBox="0 0 24 24"><path d="M7 7h14l-3-3M21 7l-3 3M17 17H3l3-3M3 17l3 3"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-debt" viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20V8M2 20h21"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.2.36.55.7 1 .9.35.15.73.2 1.1.2h.1v4h-.1c-.38 0-.75.05-1.1.2-.45.2-.8.54-1 .9z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4l11-11-4-4L4 16v4zM13.5 6.5l4 4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></symbol>
+    <symbol id="i-receipt" viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h4"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l4 4L19 6"/></symbol>
+    <symbol id="i-backup" viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4M5 13v7h14v-7"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.7 10.7l6.6-4.1M8.7 13.3l6.6 4.1"/></symbol>
+  </svg>
+
+  <div id="appShell" class="app-shell">
+    <aside id="sidebar" class="sidebar">
+      <div class="brand-wrap">
+        <img class="brand-logo" src="shahd-logo.jpg" alt="شعار شركة شهد" />
+        <button class="icon-btn sidebar-close" id="sidebarClose" aria-label="إغلاق القائمة"><svg class="icon"><use href="#i-close"/></svg></button>
+      </div>
+      <nav class="nav-list" id="navList">
+        <button class="nav-link active" data-view="dashboard"><svg class="icon"><use href="#i-home"/></svg><span>الرئيسية</span></button>
+        <button class="nav-link" data-view="projects"><svg class="icon"><use href="#i-project"/></svg><span>مشاريعي</span></button>
+        <button class="nav-link" data-view="buildings"><svg class="icon"><use href="#i-building"/></svg><span>العقارات</span></button>
+        <button class="nav-link" data-view="tenants"><svg class="icon"><use href="#i-users"/></svg><span>المستأجرون</span></button>
+        <button class="nav-link" data-view="movements"><svg class="icon"><use href="#i-swap"/></svg><span>الحركة اليومية</span></button>
+        <button class="nav-link" data-view="arrears"><svg class="icon"><use href="#i-clock"/></svg><span>متأخرات المستأجرين</span></button>
+        <button class="nav-link" data-view="debts"><svg class="icon"><use href="#i-debt"/></svg><span>الديون لنا وعلينا</span></button>
+        <button class="nav-link" data-view="reports"><svg class="icon"><use href="#i-chart"/></svg><span>التقارير</span></button>
+        <button class="nav-link" data-view="settings"><svg class="icon"><use href="#i-settings"/></svg><span>الإعدادات</span></button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="security-note"><span class="dot"></span> تخزين محلي على الجهاز</div>
+        <small>نسخة PWA تعمل بدون إنترنت</small>
+      </div>
+    </aside>
+
+    <div id="sidebarOverlay" class="sidebar-overlay"></div>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-right">
+          <button id="menuBtn" class="icon-btn" aria-label="فتح القائمة"><svg class="icon"><use href="#i-menu"/></svg></button>
+          <div>
+            <div class="top-title" id="pageTitle">لوحة التحكم</div>
+            <div class="top-subtitle" id="pageSubtitle">نظرة سريعة على العقارات والحسابات</div>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-primary" id="quickMovementBtn"><svg class="icon"><use href="#i-plus"/></svg><span>حركة جديدة</span></button>
+        </div>
+      </header>
+
+      <div class="content">
+        <section class="view active" id="view-dashboard">
+          <div class="hero-card">
+            <div>
+              <span class="eyebrow">شركة شهد للتجارة العامة والمقاولات</span>
+              <h1>إدارة العقارات والحسابات في مكان واحد</h1>
+              <p>متابعة الإيجارات، المتأخرات، الديون، السداد والحركة اليومية لكل عملة بشكل مستقل ودقيق.</p>
+            </div>
+            <div class="hero-actions">
+              <button class="btn btn-light" id="heroTenantBtn"><svg class="icon"><use href="#i-users"/></svg>إضافة مستأجر</button>
+              <button class="btn btn-light" id="heroDebtBtn"><svg class="icon"><use href="#i-debt"/></svg>إضافة دين لنا / علينا</button>
+            </div>
+          </div>
+
+          <div class="stats-grid" id="dashboardStats"></div>
+
+          <div class="grid-2">
+            <article class="panel">
+              <div class="panel-head"><div><h2>ملخص الحركة الحالية</h2><p>إجمالي الوارد والمصروف حسب العملة</p></div></div>
+              <div id="dashboardCurrencySummary" class="currency-summary"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><div><h2>تنبيهات تحتاج متابعة</h2><p>أهم الحالات المفتوحة</p></div></div>
+              <div id="dashboardAlerts" class="alerts-list"></div>
+            </article>
+          </div>
+
+          <article class="panel">
+            <div class="panel-head"><div><h2>آخر الحركات</h2><p>أحدث العمليات المسجلة</p></div><button class="btn btn-ghost" data-go="movements">عرض الكل</button></div>
+            <div id="dashboardRecent" class="table-wrap"></div>
+          </article>
+        </section>
+
+        <section class="view" id="view-projects">
+          <div class="section-actions wrap-actions">
+            <div class="search-box"><svg class="icon"><use href="#i-search"/></svg><input id="projectSearch" type="search" placeholder="بحث باسم المشروع أو العميل أو الموقع" /></div>
+            <button class="btn btn-primary" id="addProjectBtn"><svg class="icon"><use href="#i-plus"/></svg>إضافة مشروع</button>
+          </div>
+          <div id="projectsSummary" class="projects-summary-grid" aria-label="إحصائيات جميع المشاريع">
+            <article class="project-total-card total-in-card">
+              <div class="project-total-head"><span>إجمالي الوارد</span><strong>جميع المشاريع</strong></div>
+              <div class="project-total-values" id="projectsTotalIn"></div>
+              <small>كل المبالغ الواردة المسجلة على المشاريع</small>
+            </article>
+            <article class="project-total-card total-out-card">
+              <div class="project-total-head"><span>إجمالي الصادر</span><strong>جميع المشاريع</strong></div>
+              <div class="project-total-values" id="projectsTotalOut"></div>
+              <small>كل المبالغ الصادرة المسجلة على المشاريع</small>
+            </article>
+            <article class="project-total-card total-receivable-card">
+              <div class="project-total-head"><span>الدين لنا</span><strong>المتبقي</strong></div>
+              <div class="project-total-values" id="projectsTotalReceivable"></div>
+              <small>إجمالي الديون المفتوحة المطلوب تحصيلها</small>
+            </article>
+            <article class="project-total-card total-payable-card">
+              <div class="project-total-head"><span>الدين علينا</span><strong>المتبقي</strong></div>
+              <div class="project-total-values" id="projectsTotalPayable"></div>
+              <small>إجمالي الديون المفتوحة المطلوب سدادها</small>
+            </article>
+          </div>
+          <div id="projectsCards" class="cards-grid project-cards"></div>
+        </section>
+
+        <section class="view" id="view-project-details">
+          <div class="project-detail-top">
+            <button class="btn btn-ghost" data-go="projects">العودة إلى مشاريعي</button>
+            <div class="project-detail-actions">
+              <button class="btn btn-ghost" id="projectEditBtn"><svg class="icon"><use href="#i-edit"/></svg>تعديل المشروع</button>
+              <button class="btn btn-primary" id="projectAddMovementBtn"><svg class="icon"><use href="#i-swap"/></svg>تسجيل صادر / وارد</button>
+              <button class="btn btn-primary" id="projectAddReceivableBtn"><svg class="icon"><use href="#i-debt"/></svg>دين لنا</button>
+              <button class="btn btn-danger-soft" id="projectAddPayableBtn"><svg class="icon"><use href="#i-debt"/></svg>دين علينا</button>
+            </div>
+          </div>
+          <div id="projectHeader"></div>
+          <div id="projectCurrencySummary" class="project-currency-grid"></div>
+          <div class="section-actions wrap-actions project-ledger-actions">
+            <div class="tabs debt-tabs project-tabs" id="projectTabs">
+              <button class="tab active" data-project-tab="movements">الصادر والوارد</button>
+              <button class="tab" data-project-tab="receivable">ديون لنا</button>
+              <button class="tab" data-project-tab="payable">ديون علينا</button>
+              <button class="tab" data-project-tab="closed">تم السداد والانتهاء</button>
+            </div>
+          </div>
+          <div class="panel"><div id="projectDetailContent" class="table-wrap"></div></div>
+        </section>
+
+        <section class="view" id="view-buildings">
+          <div class="section-actions">
+            <div class="search-box"><svg class="icon"><use href="#i-search"/></svg><input id="buildingSearch" type="search" placeholder="بحث باسم العمارة أو العنوان" /></div>
+            <button class="btn btn-primary" id="addBuildingBtn"><svg class="icon"><use href="#i-plus"/></svg>إضافة عمارة</button>
+          </div>
+          <div id="buildingsCards" class="cards-grid"></div>
+        </section>
+
+        <section class="view" id="view-tenants">
+          <div class="section-actions wrap-actions">
+            <div class="search-box"><svg class="icon"><use href="#i-search"/></svg><input id="tenantSearch" type="search" placeholder="بحث باسم المستأجر أو رقم الجوال أو الهوية" /></div>
+            <select id="tenantBuildingFilter" class="select compact"><option value="">كل العقارات</option></select>
+            <button class="btn btn-primary" id="addTenantBtn"><svg class="icon"><use href="#i-plus"/></svg>إضافة مستأجر</button>
+          </div>
+          <div class="panel"><div id="tenantsTable" class="table-wrap"></div></div>
+        </section>
+
+        <section class="view" id="view-movements">
+          <div class="section-actions wrap-actions">
+            <div class="filter-group">
+              <input id="movementDateFrom" class="input compact" type="date" />
+              <input id="movementDateTo" class="input compact" type="date" />
+              <select id="movementTypeFilter" class="select compact"><option value="">كل الحركات</option><option value="general">حركة عامة</option><option value="rent">دفعة مستأجر</option></select>
+              <select id="movementProjectFilter" class="select compact"><option value="">كل المشاريع</option></select>
+            </div>
+            <button class="btn btn-primary" id="addMovementBtn"><svg class="icon"><use href="#i-plus"/></svg>تسجيل حركة / دفعة</button>
+          </div>
+          <div id="movementsTotals" class="mini-stats"></div>
+          <div class="panel"><div id="movementsTable" class="table-wrap"></div></div>
+        </section>
+
+        <section class="view" id="view-arrears">
+          <div class="section-actions wrap-actions">
+            <div class="filter-group">
+              <label class="inline-label">احسب المتأخرات حتى شهر <input id="arrearsCutoff" class="input compact" type="month" /></label>
+              <select id="arrearsBuildingFilter" class="select compact"><option value="">كل العقارات</option></select>
+            </div>
+            <button class="btn btn-ghost" id="refreshArrearsBtn">تحديث الحساب</button>
+          </div>
+          <div id="arrearsSummary" class="mini-stats"></div>
+          <div class="panel">
+            <div class="panel-head"><div><h2>متأخرات المستأجرين</h2><p>الحساب مبني على شهر بداية العقد، مدة العقد، والدفعات المرتبطة بالأشهر.</p></div></div>
+            <div id="arrearsTable" class="table-wrap"></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-debts">
+          <div class="section-actions wrap-actions">
+            <div class="tabs debt-tabs" id="debtTabs"><button class="tab active" data-debt-tab="receivable">ديون لنا</button><button class="tab" data-debt-tab="payable">ديون علينا</button><button class="tab" data-debt-tab="closed">تم السداد والانتهاء</button></div>
+            <button class="btn btn-primary" id="addDebtBtn"><svg class="icon"><use href="#i-plus"/></svg>إضافة دين لنا / علينا</button>
+          </div>
+          <div id="debtSummary" class="mini-stats"></div>
+          <div class="panel"><div id="debtsTable" class="table-wrap"></div></div>
+        </section>
+
+        <section class="view" id="view-reports">
+          <div class="section-actions wrap-actions">
+            <div class="filter-group"><input id="reportFrom" class="input compact" type="date" /><input id="reportTo" class="input compact" type="date" /></div>
+            <button class="btn btn-ghost" id="exportCsvBtn"><svg class="icon"><use href="#i-download"/></svg>تصدير CSV</button>
+          </div>
+          <div id="reportCards" class="stats-grid"></div>
+          <div class="grid-2">
+            <article class="panel"><div class="panel-head"><div><h2>الحركة حسب العملة</h2><p>لا يتم دمج العملات أو تحويلها</p></div></div><div id="reportCurrencies" class="currency-summary"></div></article>
+            <article class="panel"><div class="panel-head"><div><h2>الإيجارات والمتأخرات</h2><p>ملخص عقود المستأجرين حتى الشهر المحدد</p></div></div><div id="reportRent" class="report-list"></div></article>
+          </div>
+        </section>
+
+        <section class="view" id="view-settings">
+          <div class="settings-grid">
+            <article class="panel">
+              <div class="panel-head"><div><h2>هوية الشركة</h2><p>تظهر في الواجهة وسندات القبض</p></div></div>
+              <form id="settingsForm" class="form-grid">
+                <label class="field full"><span>اسم الشركة</span><input class="input" name="companyName" required /></label>
+                <label class="field full"><span>الوصف</span><input class="input" name="companySubtitle" /></label>
+                <label class="field"><span>المنفذ الافتراضي</span><input class="input" name="defaultExecutor" /></label>
+                <label class="field"><span>بادئة رقم السند</span><input class="input" name="receiptPrefix" maxlength="8" /></label>
+                <label class="field"><span>مفتاح الدولة لواتساب</span><input class="input" name="whatsappCountryCode" inputmode="numeric" placeholder="970" /></label>
+                <label class="field"><span>يوم استحقاق الإيجار</span><input class="input" name="rentDueDay" type="number" min="1" max="28" /></label>
+                <label class="field"><span>الوضع</span><select class="select" name="theme"><option value="light">فاتح</option><option value="dark">داكن</option></select></label>
+                <div class="full"><button class="btn btn-primary" type="submit"><svg class="icon"><use href="#i-check"/></svg>حفظ الإعدادات</button></div>
+              </form>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head"><div><h2>تثبيت التطبيق والنسخ الاحتياطي</h2><p>كل الملفات في مستوى واحد بدون مجلدات.</p></div></div>
+              <div class="stack-actions">
+                <button class="btn btn-primary" id="installPwaBtn"><svg class="icon"><use href="#i-download"/></svg>تثبيت التطبيق على الجهاز</button>
+                <button class="btn btn-ghost" id="backupBtn"><svg class="icon"><use href="#i-backup"/></svg>تصدير نسخة احتياطية JSON</button>
+                <label class="btn btn-ghost file-btn"><svg class="icon"><use href="#i-backup"/></svg>استيراد نسخة احتياطية<input id="restoreInput" type="file" accept="application/json" hidden /></label>
+                <button class="btn btn-danger-soft" id="loadDemoBtn">تحميل بيانات تجريبية</button>
+                <button class="btn btn-danger-soft" id="clearDataBtn">مسح جميع البيانات</button>
+              </div>
+              <div class="info-box"><strong>مهم:</strong> زر التثبيت يعمل عند فتح الموقع عبر HTTPS أو localhost. البيانات حالياً تُحفظ محلياً في المتصفح، ويمكن لاحقاً ربط نفس الواجهة بـ Firebase بدون تغيير تجربة المستخدم.</div>
+            </article>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+
+  <script src="app.js?v=7"></script>
+</body>
+</html>
