@@ -1,0 +1,15 @@
+SHAHD v19 — Fast session + background sync + mobile UX
+
+- Keeps the last successful company/user session on the device and restores it immediately on the next launch.
+- After the local screen opens, Turso validation + sync starts in the background and does not block the UI.
+- Migrates the most recently cached v18 profile automatically when possible.
+- Manual logout clears the remembered session.
+- Logout moved from the top header to Settings > Account & session.
+- Settings remains reachable for logout even when company-settings permission is not granted; protected company settings stay hidden.
+- Added arrears notification bell beside sync with a live badge and notification center.
+- Sync button is now plain/transparent: no border, card background, or shadow.
+- Added a fixed 5-item mobile bottom navigation: Home, Projects, Buildings, Movements, Arrears.
+- Mobile form grids now keep two fields side by side; text areas and complex blocks keep full width.
+- Admin mobile creation/edit forms also use compact two-column fields.
+- PWA cache bumped to v19 and service-worker update checks bypass stale browser cache.
+- App shell/assets remain Cache-First with background refresh so the application opens from local cache without internet after first load.

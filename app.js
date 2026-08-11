@@ -30,7 +30,10 @@
     }
   };
 
-  let state = loadState();
+  let state = cloneDefaults();
+  let companyUsers = [];
+  let usersLoadedAt = 0;
+  let usersLoading = false;
   let activeView = 'dashboard';
   let activeDebtTab = 'receivable';
   let activeProjectId = '';
@@ -39,6 +42,14 @@
 
   const $ = (q, root = document) => root.querySelector(q);
   const $$ = (q, root = document) => [...root.querySelectorAll(q)];
+
+  const PERMISSIONS = window.SHAHD_PERMISSIONS || {groups:[],viewForRoute:{}};
+  function can(permission) { return window.ShahdCloud?.hasPermission ? window.ShahdCloud.hasPermission(permission) : true; }
+  function requirePermission(permission, message='لا تملك صلاحية تنفيذ هذه العملية.') {
+    if (can(permission)) return true;
+    toast(message,'error'); return false;
+  }
+  function withPermission(permission, fn) { return (...args) => { if (requirePermission(permission)) return fn(...args); }; }
 
   function cloneDefaults() { return JSON.parse(JSON.stringify(defaults)); }
   function uid(prefix = 'id') {
@@ -70,7 +81,7 @@
     }
   }
   function saveState(render = true) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    window.ShahdCloud?.persistState?.(state);
     applyTheme();
     if (render) renderAll();
   }
@@ -226,13 +237,17 @@
     return `<label class="field ${extraClass}"><span>${label}</span><select class="select" name="${name}">${options.map(o=>`<option value="${escapeHtml(o.value)}" ${String(o.value)===String(value)?'selected':''}>${escapeHtml(o.label)}</option>`).join('')}</select></label>`;
   }
   function textareaField(name,label,value='',extraClass='full') {
-    return `<label class="field ${extraClass}"><span>${label}</span><textarea class="textarea" name="${name}">${escapeHtml(value)}</textarea></label>`;
+    return `<label class="field ${extraClass} textarea-field"><span>${label}</span><textarea class="textarea" name="${name}">${escapeHtml(value)}</textarea></label>`;
   }
 
   function navigate(view) {
+    const viewPermission = PERMISSIONS.viewForRoute?.[view];
+    if (view!=='settings' && viewPermission && !can(viewPermission)) { toast('هذه الصفحة غير متاحة لصلاحيات حسابك.','error'); return; }
     activeView = view;
     $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${view}`));
-    $$('.nav-link').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+    const navView=view==='project-details'?'projects':view;
+    $$('.nav-link').forEach(b => b.classList.toggle('active', b.dataset.view === navView));
+    $$('.mobile-bottom-item').forEach(b => b.classList.toggle('active', b.dataset.mobileView === navView));
     const meta = {
       dashboard:['لوحة التحكم','نظرة سريعة على العقارات والحسابات'],
       projects:['مشاريعي','إدارة مالية مستقلة لكل مشروع: صادر، وارد، ديون لنا وديون علينا'],
@@ -243,6 +258,7 @@
       arrears:['متأخرات المستأجرين','حساب الأشهر المستحقة والمتبقي بدقة'],
       debts:['الديون والسداد','ديون لنا، ديون علينا، والحسابات التي تم سدادها وإنهاؤها'],
       reports:['التقارير','ملخصات مالية حسب كل عملة بدون خلط'],
+      users:['المستخدمون والصلاحيات','إدارة حسابات الموظفين وتحديد الصلاحيات الدقيقة'],
       settings:['الإعدادات','هوية الشركة والتثبيت والنسخ الاحتياطي']
     };
     $('#pageTitle').textContent = meta[view]?.[0] || '';
@@ -251,11 +267,8 @@
     closeSidebar();
     renderAll();
     const mainScroller=$('.main');
-    if(mainScroller && mainScroller.scrollHeight>mainScroller.clientHeight){
-      mainScroller.scrollTo({top:0,behavior:'smooth'});
-    } else {
-      window.scrollTo({top:0,behavior:'smooth'});
-    }
+    if(mainScroller) mainScroller.scrollTop=0;
+    window.scrollTo({top:0,behavior:'smooth'});
   }
   function openSidebar(){ $('#sidebar').classList.add('open'); $('#sidebarOverlay').classList.add('show'); }
   function closeSidebar(){ $('#sidebar').classList.remove('open'); $('#sidebarOverlay').classList.remove('show'); }
@@ -272,7 +285,10 @@
     renderArrears();
     renderDebts();
     renderReports();
+    renderUsers();
     renderSettings();
+    updateNotificationBadge();
+    applyPermissionUI();
   }
 
   function populateGlobalFilters() {
@@ -536,6 +552,95 @@
     window.location.href=`sms:${phone}${separator}body=${encodeURIComponent(tenantArrearsMessage(tenantId))}`;
   }
 
+  async function exportArrearsPdf() {
+    if(!requirePermission('reports.export'))return;
+    const cutoff=$('#arrearsCutoff')?.value||currentMonth();
+    const buildingFilter=$('#arrearsBuildingFilter')?.value||'';
+    const rows=state.tenants.filter(t=>!buildingFilter||t.buildingId===buildingFilter).map(t=>({tenant:t,...calculateTenantArrears(t,cutoff)})).filter(x=>x.due>0n);
+    if(!rows.length){toast('لا توجد متأخرات ضمن الفلتر الحالي لتصديرها.','info');return;}
+    const button=$('#exportArrearsPdfBtn');if(button)button.disabled=true;
+    try{
+      try{await document.fonts?.ready}catch(_){ }
+      const W=1240,H=1754,M=70;
+      const brand='#0b67b2',danger='#bb2d3b',text='#152033',muted='#69778d',line='#dbe4ee',soft='#f4f8fc';
+      let logo=null;
+      try{logo=await new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>resolve(img);img.onerror=reject;img.src='shahd-logo.jpg';if(img.complete&&img.naturalWidth)resolve(img)})}catch(_){logo=null}
+      const totalByCurrency=Object.fromEntries(CURRENCIES.map(c=>[c,rows.filter(r=>r.currency===c).reduce((sum,r)=>sum+r.due,0n)]));
+      const buildingName=buildingFilter?(buildingById(buildingFilter)?.name||'العقار المحدد'):'جميع العقارات';
+      const pages=[];
+      const firstCount=6, nextCount=9;
+      let start=0,pageNo=1;
+      while(start<rows.length){
+        const isFirst=pageNo===1,count=isFirst?firstCount:nextCount,chunk=rows.slice(start,start+count);
+        const canvas=document.createElement('canvas');canvas.width=W;canvas.height=H;const ctx=canvas.getContext('2d');
+        ctx.fillStyle='#ffffff';ctx.fillRect(0,0,W,H);ctx.direction='rtl';ctx.textBaseline='alphabetic';
+        const font=(weight,size)=>`${weight} ${size}px Cairo, Arial, sans-serif`;
+        const write=(value,x,y,size=28,weight=600,color=text,align='right')=>{ctx.font=font(weight,size);ctx.fillStyle=color;ctx.textAlign=align;ctx.fillText(String(value??''),x,y)};
+        const rounded=(x,y,w,h,r,fill,stroke='')=>{ctx.beginPath();if(ctx.roundRect)ctx.roundRect(x,y,w,h,r);else{ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y)}ctx.fillStyle=fill;ctx.fill();if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=2;ctx.stroke()}};
+        const wrap=(value,maxWidth,size=22,weight=500,maxLines=2)=>{ctx.font=font(weight,size);const words=String(value||'').split(/\s+/),lines=[];let cur='';for(const word of words){const test=cur?`${cur} ${word}`:word;if(ctx.measureText(test).width<=maxWidth)cur=test;else{if(cur)lines.push(cur);cur=word;if(lines.length>=maxLines-1)break}}if(cur&&lines.length<maxLines)lines.push(cur);return lines};
+        let y=M;
+        if(logo){const ratio=logo.naturalWidth/logo.naturalHeight,lh=120,lw=Math.min(290,lh*ratio);ctx.drawImage(logo,W-M-lw,y,lw,lh)}
+        write('تقرير متأخرات المستأجرين',M,y+52,42,800,brand,'left');
+        write(`حتى شهر: ${monthLabel(cutoff)}`,M,y+94,23,600,muted,'left');
+        write(`النطاق: ${buildingName}`,M,y+128,21,500,muted,'left');
+        y+=165;ctx.strokeStyle=line;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(M,y);ctx.lineTo(W-M,y);ctx.stroke();y+=30;
+        if(isFirst){
+          const gap=16,cw=(W-2*M-gap)/2,ch=104;
+          CURRENCIES.forEach((c,i)=>{const col=i%2,row=Math.floor(i/2),x=M+col*(cw+gap),cy=y+row*(ch+gap);rounded(x,cy,cw,ch,18,soft,line);write(`${CURRENCY_META[c].label} - إجمالي المتأخر`,x+cw-22,cy+36,20,700,muted);write(formatMoney(totalByCurrency[c],c,true),x+cw-22,cy+78,28,800,totalByCurrency[c]>0n?danger:brand)});
+          y+=2*(ch+gap)+18;
+        }
+        chunk.forEach((r,i)=>{
+          const t=r.tenant,b=buildingById(t.buildingId),rh=142;
+          rounded(M,y,W-2*M,rh,18,i%2===0?'#ffffff':soft,line);
+          const right=W-M-24;
+          write(t.name,right,y+34,25,800,text);
+          write(t.phone||'بدون رقم جوال',right,y+67,18,500,muted);
+          const loc=[b?.name,t.direction].filter(Boolean).join(' - ')||'بدون تحديد';
+          write(loc,right,y+100,19,600,brand);
+          write(`المستحق: ${formatMoney(r.due,r.currency,true)}`,M+24,y+38,24,800,danger,'left');
+          write(`الإيجار: ${formatMoney(t.rentAmount,t.rentCurrency)}`,M+24,y+72,18,600,muted,'left');
+          write(`${r.months.length} شهر متأخر`,M+24,y+103,18,700,danger,'left');
+          const monthText=`الأشهر: ${r.months.map(x=>monthLabel(x.month)).join('، ')}`;
+          const lines=wrap(monthText,W-2*M-48,16,500,2);lines.forEach((ln,j)=>write(ln,right,y+126+j*20,16,500,muted));
+          y+=rh+14;
+        });
+        write(`تاريخ إصدار التقرير: ${dateLabel(today())}`,W-M,H-45,17,500,muted);
+        write(`صفحة ${pageNo}`,M,H-45,17,600,muted,'left');
+        const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.92));if(!blob)throw new Error('تعذر تجهيز صفحة التقرير.');
+        pages.push({blob,width:W,height:H});start+=chunk.length;pageNo++;
+      }
+      const pdfBlob=await jpegPagesToPdf(pages);
+      const fileName=`shahd-arrears-${cutoff}-${today()}.pdf`;
+      const file=typeof File!=='undefined'?new File([pdfBlob],fileName,{type:'application/pdf'}):null;
+      if(file&&navigator.share&&navigator.canShare?.({files:[file]})){
+        try{await navigator.share({title:'تقرير متأخرات المستأجرين',text:`تقرير المتأخرات حتى ${monthLabel(cutoff)}`,files:[file]});toast('تم تجهيز تقرير PDF للمشاركة.');return}catch(err){if(err?.name==='AbortError')return}
+      }
+      downloadBlob(pdfBlob,fileName);toast('تم إنشاء تقرير المتأخرات PDF.');
+    }catch(err){toast(err?.message||'تعذر إنشاء تقرير PDF.','error')}
+    finally{if(button)button.disabled=false}
+  }
+
+  async function jpegPagesToPdf(pages) {
+    const enc=new TextEncoder(),chunks=[];let offset=0;const offsets=[0];
+    const push=value=>{const bytes=typeof value==='string'?enc.encode(value):value;chunks.push(bytes);offset+=bytes.length};
+    push('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+    const pageIds=pages.map((_,i)=>3+i*3);
+    const objectCount=2+pages.length*3;
+    const obj=(id,bodyParts)=>{offsets[id]=offset;push(`${id} 0 obj\n`);for(const part of bodyParts)push(part);push('\nendobj\n')};
+    obj(1,[`<< /Type /Catalog /Pages 2 0 R >>`]);
+    obj(2,[`<< /Type /Pages /Count ${pages.length} /Kids [${pageIds.map(id=>`${id} 0 R`).join(' ')}] >>`]);
+    for(let i=0;i<pages.length;i++){
+      const pageId=3+i*3,imgId=pageId+1,contentId=pageId+2,p=pages[i];
+      const jpeg=new Uint8Array(await p.blob.arrayBuffer());
+      obj(pageId,[`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /Im${i+1} ${imgId} 0 R >> >> /Contents ${contentId} 0 R >>`]);
+      obj(imgId,[`<< /Type /XObject /Subtype /Image /Width ${p.width} /Height ${p.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`,jpeg,'\nendstream']);
+      const stream=`q\n595.28 0 0 841.89 0 0 cm\n/Im${i+1} Do\nQ\n`,bytes=enc.encode(stream);
+      obj(contentId,[`<< /Length ${bytes.length} >>\nstream\n`,bytes,'endstream']);
+    }
+    const xref=offset;push(`xref\n0 ${objectCount+1}\n0000000000 65535 f \n`);for(let i=1;i<=objectCount;i++)push(`${String(offsets[i]||0).padStart(10,'0')} 00000 n \n`);push(`trailer\n<< /Size ${objectCount+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+    return new Blob(chunks,{type:'application/pdf'});
+  }
+
   function debtPaidUnits(debt) {
     return state.debtPayments.filter(p=>p.debtId===debt.id && p.currency===debt.currency).reduce((s,p)=>s+toUnits(p.amount,debt.currency),0n);
   }
@@ -595,6 +700,9 @@
   }
 
   function renderSettings() {
+    const session=window.ShahdCloud?.getSession?.()||{};
+    if($('#settingsSessionUser')) $('#settingsSessionUser').textContent=session.displayName||session.username||'—';
+    if($('#settingsSessionCompany')) $('#settingsSessionCompany').textContent=session.companyName||'—';
     const f=$('#settingsForm'); if(!f) return;
     ['companyName','companySubtitle','defaultExecutor','receiptPrefix','whatsappCountryCode','rentDueDay','theme'].forEach(k=>{if(f.elements[k]) f.elements[k].value=state.settings[k]??'';});
   }
@@ -880,6 +988,109 @@ ${state.settings.companyName}`;
   function deleteMovement(id){confirmAction({message:'حذف الحركة سيؤثر على الرصيد والمتأخرات إن كانت دفعة إيجار.',onConfirm:()=>{state.movements=state.movements.filter(m=>m.id!==id);saveState();toast('تم حذف الحركة وإعادة احتساب الأرصدة.');}});}
   function deleteDebt(id){const linkedPayments=state.debtPayments.filter(p=>p.debtId===id);const movementIds=new Set(linkedPayments.map(p=>p.movementId).filter(Boolean));confirmAction({message:`سيتم حذف الدين${linkedPayments.length?` و${linkedPayments.length} عملية سداد/تحصيل مرتبطة به`:''} مع الحركات اليومية المرتبطة تلقائياً.`,onConfirm:()=>{state.debts=state.debts.filter(d=>d.id!==id);state.debtPayments=state.debtPayments.filter(p=>p.debtId!==id);state.movements=state.movements.filter(m=>m.debtId!==id&&!movementIds.has(m.id));saveState();toast('تم حذف الدين والحركات المرتبطة به.');}});}
 
+  function permissionCheckboxes(selected={}) {
+    return `<div class="permission-groups">${(PERMISSIONS.groups||[]).map(group=>`<section class="permission-group"><h4>${escapeHtml(group.label)}</h4><div class="permission-list">${group.permissions.map(([key,label])=>`<label class="permission-check"><input type="checkbox" name="perm" value="${escapeHtml(key)}" ${selected?.[key]===true?'checked':''}><span>${escapeHtml(label)}</span></label>`).join('')}</div></section>`).join('')}</div>`;
+  }
+
+  async function loadUsers(force=false) {
+    if (!can('users.view') || usersLoading || (!force && usersLoadedAt && Date.now()-usersLoadedAt<30000)) return;
+    usersLoading=true;
+    try {
+      const result=await window.ShahdCloud.listUsers();
+      companyUsers=Array.isArray(result?.users)?result.users:[];usersLoadedAt=Date.now();renderUsers();applyPermissionUI();
+    } catch(err) { toast(err?.message||'تعذر تحميل المستخدمين.','error'); }
+    finally { usersLoading=false; }
+  }
+
+  function renderUsers() {
+    const root=$('#usersTable'), summary=$('#usersSummary'); if(!root||!summary)return;
+    if(!can('users.view')){root.innerHTML='<div class="empty">هذه الصفحة غير متاحة لهذا الحساب.</div>';summary.innerHTML='';return;}
+    const session=window.ShahdCloud.getSession?.()||{};
+    const active=companyUsers.filter(u=>u.active).length, employees=companyUsers.filter(u=>u.role!=='manager').length;
+    summary.innerHTML=[['المستخدمون',companyUsers.length],['النشطون',active],['الموظفون',employees],['الحد الأقصى',session.maxUsers||'—']].map(([l,v])=>`<div class="mini-card"><small>${l}</small><strong>${typeof v==='number'?v.toLocaleString('ar'):v}</strong></div>`).join('');
+    if(!companyUsers.length){root.innerHTML=usersLoading?'<div class="empty">جاري التحميل...</div>':'<div class="empty">لا توجد بيانات مستخدمين بعد.</div>';if(activeView==='users'&&!usersLoading)setTimeout(()=>loadUsers(),0);return;}
+    root.innerHTML=`<table><thead><tr><th>المستخدم</th><th>الدور</th><th>الحالة</th><th>الصلاحيات</th><th>إجراءات</th></tr></thead><tbody>${companyUsers.map(u=>{const permCount=u.role==='manager'?'الكل':Object.values(u.permissions||{}).filter(Boolean).length;return `<tr><td><strong>${escapeHtml(u.display_name||u.displayName||u.username)}</strong><br><small>${escapeHtml(u.username)}</small></td><td><span class="badge ${u.role==='manager'?'badge-blue':'badge-gray'}">${u.role==='manager'?'مدير':'موظف'}</span></td><td><span class="user-status ${u.active?'money-in':'money-out'}">${u.active?'نشط':'موقوف'}</span></td><td>${u.role==='manager'?'جميع الصلاحيات':`${permCount} صلاحية`}</td><td><div class="actions">${u.role!=='manager'?`<button class="btn btn-ghost btn-sm" data-edit-user="${u.id}">تعديل وصلاحيات</button><button class="btn ${u.active?'btn-danger-soft':'btn-primary'} btn-sm" data-toggle-user="${u.id}" data-user-active="${u.active?'1':'0'}">${u.active?'إيقاف':'تفعيل'}</button>`:'<span class="badge badge-blue">حساب المدير</span>'}</div></td></tr>`}).join('')}</tbody></table>`;
+    if(activeView==='users'&&!usersLoadedAt&&!usersLoading)setTimeout(()=>loadUsers(),0);
+  }
+
+  function openUserModal(id=null) {
+    const user=id?companyUsers.find(u=>u.id===id):null;
+    if(user && !requirePermission('users.edit'))return;if(!user && !requirePermission('users.create'))return;
+    const selected=user?.permissions||{'dashboard.view':true};
+    const body=`<div class="form-grid">${fullField('displayName','اسم الموظف',user?.display_name||user?.displayName||'','text','required')}${field('username','اسم المستخدم',user?.username||'','text','required autocomplete="off"')}${fullField('password',user?'كلمة مرور جديدة (اتركها فارغة للإبقاء على الحالية)':'كلمة المرور', '', 'password', `${user?'':'required '}minlength="6" autocomplete="new-password"`)}</div><div style="padding:0 20px 18px"><div class="form-note" style="margin-bottom:12px">حدد الصلاحيات بدقة. المستخدم لن يرى الصفحات أو الأزرار غير المسموحة له.</div>${permissionCheckboxes(selected)}</div>`;
+    const {form,close}=showModal({title:user?'تعديل المستخدم والصلاحيات':'إضافة مستخدم',subtitle:'الصلاحيات تطبق على صفحات وأزرار وحساب الموظف',icon:'i-user-shield',size:'lg',body,submitText:user?'حفظ التعديلات':'إنشاء المستخدم',onSubmit:(fd,formEl)=>{(async()=>{const permissions={};formEl.querySelectorAll('input[name="perm"]:checked').forEach(el=>permissions[el.value]=true);['projects','buildings','tenants','movements','debts','reports','users','settings'].forEach(m=>{if(Object.keys(permissions).some(k=>k.startsWith(`${m}.`)&&k!==`${m}.view`&&permissions[k]))permissions[`${m}.view`]=true;});if(permissions['arrears.view']){permissions['tenants.view']=true;permissions['movements.view']=true;}if(permissions['arrears.collect']){permissions['arrears.view']=true;permissions['tenants.view']=true;permissions['movements.view']=true;permissions['movements.create']=true;}if(permissions['arrears.contact'])permissions['arrears.view']=true;if(permissions['debts.pay']){permissions['debts.view']=true;permissions['movements.create']=true;}if(permissions['movements.receipt'])permissions['movements.view']=true;if(permissions['sync.manual'])permissions['sync.view']=true;const payload={id:user?.id||'',displayName:String(fd.get('displayName')||'').trim(),username:String(fd.get('username')||'').trim(),password:String(fd.get('password')||''),permissions};if(!payload.displayName||!payload.username){toast('أدخل اسم الموظف واسم المستخدم.','error');return;}try{await window.ShahdCloud.saveUser(payload);toast(user?'تم تحديث المستخدم وإبطال جلسته القديمة.':'تم إنشاء المستخدم.');close();usersLoadedAt=0;await loadUsers(true);}catch(err){toast(err?.message||'تعذر حفظ المستخدم.','error');}})();return false;}});
+  }
+
+  async function toggleCompanyUser(id,active) {
+    if(!requirePermission('users.disable'))return;
+    try{await window.ShahdCloud.toggleUser(id,!active);toast(active?'تم إيقاف المستخدم.':'تم تفعيل المستخدم.');usersLoadedAt=0;await loadUsers(true);}catch(err){toast(err?.message||'تعذر تحديث المستخدم.','error');}
+  }
+
+  function applyPermissionUI() {
+    const visibility=[
+      ['#quickMovementBtn,#addMovementBtn','movements.create'],['#heroTenantBtn,#addTenantBtn','tenants.create'],['#heroDebtBtn,#addDebtBtn','debts.create'],
+      ['#addProjectBtn','projects.create'],['#addBuildingBtn','buildings.create'],['#syncButton','sync.view'],['#projectEditBtn','projects.edit'],['#projectAddMovementBtn','movements.create'],
+      ['#projectAddReceivableBtn,#projectAddPayableBtn','debts.create'],['#exportCsvBtn,#exportArrearsPdfBtn','reports.export'],['#addUserBtn','users.create'],
+      ['[data-edit-project]','projects.edit'],['[data-delete-project]','projects.delete'],['[data-edit-building]','buildings.edit'],['[data-delete-building]','buildings.delete'],
+      ['[data-edit-tenant]','tenants.edit'],['[data-delete-tenant]','tenants.delete'],['[data-pay-tenant],[data-pay-arrears]','arrears.collect'],
+      ['[data-arrears-whatsapp],[data-arrears-sms]','arrears.contact'],['[data-edit-movement]','movements.edit'],['[data-delete-movement]','movements.delete'],['[data-receipt]','movements.receipt'],
+      ['[data-edit-debt]','debts.edit'],['[data-delete-debt]','debts.delete'],['[data-debt-payment]','debts.pay'],['[data-edit-user]','users.edit'],['[data-toggle-user]','users.disable']
+    ];
+    $$('.nav-link[data-view]').forEach(el=>{const perm=PERMISSIONS.viewForRoute?.[el.dataset.view];el.hidden=el.dataset.view==='settings'?false:Boolean(perm&&!can(perm));});
+    $$('.mobile-bottom-item[data-mobile-view]').forEach(el=>{const perm=PERMISSIONS.viewForRoute?.[el.dataset.mobileView];el.hidden=Boolean(perm&&!can(perm));});
+    const mobileNav=$('#mobileBottomNav');if(mobileNav){const visible=$$('.mobile-bottom-item[data-mobile-view]').filter(el=>!el.hidden).length;mobileNav.style.setProperty('--mobile-nav-count',String(Math.max(1,visible)));}
+    $$('.settings-protected').forEach(el=>el.hidden=!can('settings.view'));
+    visibility.forEach(([selector,perm])=>$$(selector).forEach(el=>el.hidden=!can(perm)));
+    if($('#notificationButton')) $('#notificationButton').hidden=!can('arrears.view');
+    const settingsForm=$('#settingsForm');if(settingsForm){const editable=can('settings.edit');$$('input,select,textarea,button[type="submit"]',settingsForm).forEach(el=>el.disabled=!editable);}
+    ['#backupBtn','#restoreInput'].forEach(selector=>$$(selector).forEach(el=>{const host=el.closest('label')||el;host.hidden=!can('settings.backup');}));
+  }
+
+  function guardPermissionClick(e) {
+    const guards=[['[data-edit-project]','projects.edit'],['[data-delete-project]','projects.delete'],['[data-edit-building]','buildings.edit'],['[data-delete-building]','buildings.delete'],['[data-edit-tenant]','tenants.edit'],['[data-delete-tenant]','tenants.delete'],['[data-pay-tenant],[data-pay-arrears]','arrears.collect'],['[data-arrears-whatsapp],[data-arrears-sms]','arrears.contact'],['[data-edit-movement]','movements.edit'],['[data-delete-movement]','movements.delete'],['[data-receipt]','movements.receipt'],['[data-edit-debt]','debts.edit'],['[data-delete-debt]','debts.delete'],['[data-debt-payment]','debts.pay'],['[data-edit-user]','users.edit'],['[data-toggle-user]','users.disable']];
+    for(const [selector,perm] of guards){if(e.target.closest(selector)&&!can(perm)){e.preventDefault();e.stopImmediatePropagation();toast('لا تملك صلاحية تنفيذ هذه العملية.','error');return false;}}
+    return true;
+  }
+
+  function currentArrearsNotifications(){
+    if(!can('arrears.view')) return [];
+    const cutoff=currentMonth();
+    return state.tenants.map(t=>({tenant:t,...calculateTenantArrears(t,cutoff)})).filter(x=>x.due>0n).sort((a,b)=>Number(b.months?.length||0)-Number(a.months?.length||0));
+  }
+
+  function updateNotificationBadge(){
+    const btn=$('#notificationButton'),badge=$('#notificationBadge');
+    if(!btn||!badge)return;
+    if(!can('arrears.view')){btn.hidden=true;badge.hidden=true;return;}
+    btn.hidden=false;
+    const rows=currentArrearsNotifications(),count=rows.length;
+    badge.textContent=count>99?'99+':String(count);
+    badge.hidden=count===0;
+    btn.classList.toggle('has-alerts',count>0);
+    btn.title=count?`${count} مستأجر لديهم متأخرات`:'لا توجد متأخرات حالياً';
+  }
+
+  function openNotificationsModal(){
+    if(!requirePermission('arrears.view'))return;
+    const rows=currentArrearsNotifications();
+    const body=rows.length?`<div class="notification-list">${rows.slice(0,30).map(r=>{const t=r.tenant,b=buildingById(t.buildingId);return `<div class="notification-item"><div class="notification-item-main"><strong>${escapeHtml(t.name)}</strong><small>${escapeHtml(b?.name||'بدون عمارة')}${t.direction?` • ${escapeHtml(t.direction)}`:''}<br>${r.months.length} شهر متأخر حتى ${monthLabel(currentMonth())}</small></div><div class="notification-amount">${formatMoney(r.due,r.currency,true)}</div></div>`}).join('')}</div>${rows.length>30?`<div class="form-note" style="margin-top:10px">يوجد ${rows.length-30} تنبيه إضافي. افتح صفحة المتأخرات لعرض الجميع.</div>`:''}`:'<div class="empty">لا توجد متأخرات مستحقة حالياً.</div>';
+    const {close}=showModal({title:'تنبيهات المتأخرات',subtitle:rows.length?`${rows.length} مستأجر يحتاجون متابعة`:'الحسابات محدثة',icon:'i-bell',size:'lg',body,hideSubmit:true,extraFooter:rows.length?'<button class="btn btn-primary" type="button" id="openArrearsFromAlerts">فتح المتأخرات</button>':''});
+    $('#openArrearsFromAlerts')?.addEventListener('click',()=>{close();setTimeout(()=>navigate('arrears'),190);});
+  }
+
+  function formatBytes(bytes){const n=Number(bytes||0);if(n<1024)return `${n} B`;if(n<1048576)return `${(n/1024).toFixed(1)} KB`;if(n<1073741824)return `${(n/1048576).toFixed(1)} MB`;return `${(n/1073741824).toFixed(2)} GB`;}
+  async function openSyncModal(){
+    if(!requirePermission('sync.view'))return;
+    const [queue,storage]=await Promise.all([window.ShahdCloud.queueItems(),window.ShahdCloud.storageStats()]);const pct=storage.quota?Math.min(100,(storage.usage/storage.quota)*100):0;
+    const body=`<div class="mini-stats"><div class="mini-card"><small>في الطابور</small><strong>${queue.length}</strong></div><div class="mini-card"><small>المستخدم محلياً</small><strong>${formatBytes(storage.usage)}</strong></div><div class="mini-card"><small>المساحة المتاحة</small><strong>${formatBytes(storage.quota)}</strong></div><div class="mini-card"><small>تخزين دائم</small><strong>${storage.persisted?'نعم':'حسب الجهاز'}</strong></div></div><div class="storage-meter"><span style="width:${pct.toFixed(1)}%"></span></div><div class="form-note" style="margin:10px 0 12px">كل عملية في الطابور مستقلة. إذا تعطلت عملية، تستمر المزامنة في باقي العمليات ولا يتم حذف العملية المتعثرة.</div><div class="sync-queue-list">${queue.length?queue.map(q=>`<div class="sync-queue-item"><div><strong>${escapeHtml(q.entityType)} • ${escapeHtml(q.action)}</strong><small>${q.attempts?`${q.attempts} محاولة`: 'بانتظار الرفع'}</small></div>${q.lastError?`<small class="queue-error">${escapeHtml(q.lastError)}</small>`:''}</div>`).join(''):'<div class="empty">الطابور فارغ — كل التعديلات متزامنة.</div>'}</div>`;
+    const {close}=showModal({title:'المزامنة والطابور',subtitle:navigator.onLine===false?'الجهاز حالياً بدون إنترنت':'المزامنة اقتصادية وتقرأ التغييرات فقط',icon:'i-sync',size:'lg',body,hideSubmit:true,extraFooter:can('sync.manual')?'<button class="btn btn-primary" type="button" id="modalSyncNow"><svg class="icon"><use href="#i-sync"/></svg>مزامنة الآن</button>':''});
+    $('#modalSyncNow')?.addEventListener('click',async()=>{const b=$('#modalSyncNow');b.disabled=true;try{const r=await window.ShahdCloud.syncNow({manual:true});toast(r?.failed?'تمت المزامنة مع بقاء بعض العمليات المتعثرة.':'تمت المزامنة.');close();setTimeout(openSyncModal,220);}catch(err){toast(err?.message||'تعذر المزامنة.','error');}finally{if(b)b.disabled=false;}});
+  }
+
+  function updateSyncStatus(detail={}){
+    const btn=$('#syncButton'),badge=$('#syncBadge');if(!btn||!badge)return;const count=Number(detail.count||0);badge.textContent=count>99?'99+':String(count);badge.hidden=count===0;btn.classList.toggle('syncing',detail.syncing===true);btn.classList.toggle('offline',detail.online===false);btn.classList.toggle('error',Boolean(detail.lastSyncError||detail.error));btn.title=detail.online===false?`بدون إنترنت • ${count} عملية في الطابور`:(detail.syncing?'جاري المزامنة...':`${count} عملية في الطابور`);
+  }
+
   function installPwa() {
     if(deferredInstallPrompt){deferredInstallPrompt.prompt();deferredInstallPrompt.userChoice.then(choice=>{if(choice.outcome==='accepted')toast('تم قبول تثبيت التطبيق.');deferredInstallPrompt=null;});return;}
     showModal({title:'تثبيت تطبيق شهد',icon:'i-download',hideSubmit:true,body:`<div class="form-note" style="font-size:13px"><strong>إذا لم يظهر زر التثبيت تلقائياً:</strong><br>• Android / Chrome: افتح قائمة المتصفح ثم اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».<br>• iPhone / Safari: اضغط مشاركة ثم «إضافة إلى الشاشة الرئيسية».<br><br>يجب تشغيل الملفات عبر HTTPS أو localhost حتى تعمل خصائص PWA والتثبيت بشكل كامل.</div>`});
@@ -889,6 +1100,7 @@ ${state.settings.companyName}`;
     $('#menuBtn').addEventListener('click',openSidebar);$('#sidebarClose').addEventListener('click',closeSidebar);$('#sidebarOverlay').addEventListener('click',closeSidebar);
     $('#navList').addEventListener('click',e=>{const b=e.target.closest('[data-view]');if(b)navigate(b.dataset.view);});
     document.addEventListener('click',e=>{
+      if(!guardPermissionClick(e))return;
       const go=e.target.closest('[data-go]');if(go)navigate(go.dataset.go);
       const op=e.target.closest('[data-open-project]');if(op)openProjectDetails(op.dataset.openProject);
       const ep=e.target.closest('[data-edit-project]');if(ep)openProjectModal(ep.dataset.editProject);
@@ -909,30 +1121,59 @@ ${state.settings.companyName}`;
       const dp=e.target.closest('[data-debt-payment]');if(dp)openDebtPaymentModal(dp.dataset.debtPayment);
       const dh=e.target.closest('[data-debt-history]');if(dh)openDebtHistoryModal(dh.dataset.debtHistory);
       const ddp=e.target.closest('[data-delete-debt-payment]');if(ddp)deleteDebtPayment(ddp.dataset.deleteDebtPayment);
+      const eu=e.target.closest('[data-edit-user]');if(eu)openUserModal(eu.dataset.editUser);
+      const tu=e.target.closest('[data-toggle-user]');if(tu)toggleCompanyUser(tu.dataset.toggleUser,tu.dataset.userActive==='1');
     });
-    $('#quickMovementBtn').addEventListener('click',()=>openMovementModal());$('#addMovementBtn').addEventListener('click',()=>openMovementModal());
-    $('#heroTenantBtn').addEventListener('click',()=>openTenantModal());$('#heroDebtBtn').addEventListener('click',()=>openDebtModal());
-    $('#addProjectBtn').addEventListener('click',()=>openProjectModal());$('#projectSearch').addEventListener('input',renderProjects);
-    $('#projectEditBtn').addEventListener('click',()=>{if(activeProjectId)openProjectModal(activeProjectId);});$('#projectAddMovementBtn').addEventListener('click',()=>{if(activeProjectId)openMovementModal(null,{projectId:activeProjectId});});$('#projectAddReceivableBtn').addEventListener('click',()=>{if(activeProjectId)openDebtModal(null,{projectId:activeProjectId,direction:'receivable'});});$('#projectAddPayableBtn').addEventListener('click',()=>{if(activeProjectId)openDebtModal(null,{projectId:activeProjectId,direction:'payable'});});
+    $('#quickMovementBtn').addEventListener('click',withPermission('movements.create',()=>openMovementModal()));$('#addMovementBtn').addEventListener('click',withPermission('movements.create',()=>openMovementModal()));
+    $('#heroTenantBtn').addEventListener('click',withPermission('tenants.create',()=>openTenantModal()));$('#heroDebtBtn').addEventListener('click',withPermission('debts.create',()=>openDebtModal()));
+    $('#addProjectBtn').addEventListener('click',withPermission('projects.create',()=>openProjectModal()));$('#projectSearch').addEventListener('input',renderProjects);
+    $('#projectEditBtn').addEventListener('click',withPermission('projects.edit',()=>{if(activeProjectId)openProjectModal(activeProjectId);}));$('#projectAddMovementBtn').addEventListener('click',withPermission('movements.create',()=>{if(activeProjectId)openMovementModal(null,{projectId:activeProjectId});}));$('#projectAddReceivableBtn').addEventListener('click',withPermission('debts.create',()=>{if(activeProjectId)openDebtModal(null,{projectId:activeProjectId,direction:'receivable'});}));$('#projectAddPayableBtn').addEventListener('click',withPermission('debts.create',()=>{if(activeProjectId)openDebtModal(null,{projectId:activeProjectId,direction:'payable'});}));
     $('#projectTabs').addEventListener('click',e=>{const t=e.target.closest('[data-project-tab]');if(t){activeProjectTab=t.dataset.projectTab;renderProjectDetails();}});
-    $('#addBuildingBtn').addEventListener('click',()=>openBuildingModal());$('#addTenantBtn').addEventListener('click',()=>openTenantModal());$('#addDebtBtn').addEventListener('click',()=>openDebtModal());
+    $('#addBuildingBtn').addEventListener('click',withPermission('buildings.create',()=>openBuildingModal()));$('#addTenantBtn').addEventListener('click',withPermission('tenants.create',()=>openTenantModal()));$('#addDebtBtn').addEventListener('click',withPermission('debts.create',()=>openDebtModal()));
     $('#buildingSearch').addEventListener('input',renderBuildings);$('#tenantSearch').addEventListener('input',renderTenants);$('#tenantBuildingFilter').addEventListener('change',renderTenants);
     ['movementDateFrom','movementDateTo','movementTypeFilter','movementProjectFilter'].forEach(id=>$(`#${id}`).addEventListener('change',renderMovements));
-    $('#arrearsCutoff').value=currentMonth();$('#arrearsCutoff').addEventListener('change',()=>{renderArrears();renderReports();});$('#arrearsBuildingFilter').addEventListener('change',renderArrears);$('#refreshArrearsBtn').addEventListener('click',renderArrears);
+    $('#arrearsCutoff').value=currentMonth();$('#arrearsCutoff').addEventListener('change',()=>{renderArrears();renderReports();});$('#arrearsBuildingFilter').addEventListener('change',renderArrears);$('#refreshArrearsBtn').addEventListener('click',renderArrears);$('#exportArrearsPdfBtn').addEventListener('click',withPermission('reports.export',exportArrearsPdf));
     $('#debtTabs').addEventListener('click',e=>{const t=e.target.closest('[data-debt-tab]');if(t){activeDebtTab=t.dataset.debtTab;renderDebts();}});
-    $('#reportFrom').addEventListener('change',renderReports);$('#reportTo').addEventListener('change',renderReports);$('#exportCsvBtn').addEventListener('click',exportCsv);
-    $('#settingsForm').addEventListener('submit',e=>{e.preventDefault();const fd=new FormData(e.currentTarget);state.settings.companyName=String(fd.get('companyName')||'').trim()||'شركة شهد';state.settings.companySubtitle=String(fd.get('companySubtitle')||'').trim();state.settings.defaultExecutor=String(fd.get('defaultExecutor')||'').trim();state.settings.receiptPrefix=String(fd.get('receiptPrefix')||'SH').trim().toUpperCase();state.settings.whatsappCountryCode=String(fd.get('whatsappCountryCode')||'970').replace(/\D/g,'')||'970';state.settings.rentDueDay=Math.min(28,Math.max(1,Number(fd.get('rentDueDay')||1)));state.settings.theme=fd.get('theme')||'light';saveState();toast('تم حفظ الإعدادات.');});
-    $('#installPwaBtn').addEventListener('click',installPwa);$('#backupBtn').addEventListener('click',exportBackup);$('#restoreInput').addEventListener('change',e=>{if(e.target.files[0])restoreBackup(e.target.files[0]);e.target.value='';});
-    $('#loadDemoBtn').addEventListener('click',()=>confirmAction({title:'تحميل بيانات تجريبية',message:'سيتم استبدال البيانات الحالية ببيانات تجريبية توضح المتأخرات والديون.',confirmText:'تحميل البيانات',danger:false,onConfirm:loadDemoData}));
-    $('#clearDataBtn').addEventListener('click',()=>confirmAction({title:'مسح جميع البيانات',message:'هذا الإجراء يحذف جميع المشاريع والعقارات والمستأجرين والحركات والديون من هذا المتصفح.',confirmText:'مسح نهائي',onConfirm:()=>{state=cloneDefaults();saveState();toast('تم مسح البيانات.','info');}}));
+    $('#reportFrom').addEventListener('change',renderReports);$('#reportTo').addEventListener('change',renderReports);$('#exportCsvBtn').addEventListener('click',withPermission('reports.export',exportCsv));
+    $('#settingsForm').addEventListener('submit',e=>{e.preventDefault();if(!requirePermission('settings.edit'))return;const fd=new FormData(e.currentTarget);state.settings.companyName=String(fd.get('companyName')||'').trim()||'شركة شهد';state.settings.companySubtitle=String(fd.get('companySubtitle')||'').trim();state.settings.defaultExecutor=String(fd.get('defaultExecutor')||'').trim();state.settings.receiptPrefix=String(fd.get('receiptPrefix')||'SH').trim().toUpperCase();state.settings.whatsappCountryCode=String(fd.get('whatsappCountryCode')||'970').replace(/\D/g,'')||'970';state.settings.rentDueDay=Math.min(28,Math.max(1,Number(fd.get('rentDueDay')||1)));state.settings.theme=fd.get('theme')||'light';saveState();toast('تم حفظ الإعدادات.');});
+    $('#installPwaBtn').addEventListener('click',installPwa);$('#backupBtn').addEventListener('click',withPermission('settings.backup',exportBackup));$('#restoreInput').addEventListener('change',e=>{if(!requirePermission('settings.backup')){e.target.value='';return;}if(e.target.files[0])restoreBackup(e.target.files[0]);e.target.value='';});
+    $('#loadDemoBtn').addEventListener('click',withPermission('settings.edit',()=>confirmAction({title:'تحميل بيانات تجريبية',message:'سيتم استبدال البيانات الحالية ببيانات تجريبية توضح المتأخرات والديون.',confirmText:'تحميل البيانات',danger:false,onConfirm:loadDemoData})));
+    $('#clearDataBtn').addEventListener('click',withPermission('settings.edit',()=>confirmAction({title:'مسح جميع البيانات',message:'هذا الإجراء يحذف جميع المشاريع والعقارات والمستأجرين والحركات والديون من هذا المتصفح.',confirmText:'مسح نهائي',onConfirm:()=>{state=cloneDefaults();saveState();toast('تم مسح البيانات.','info');}})));
+    $('#addUserBtn').addEventListener('click',withPermission('users.create',()=>openUserModal()));
+    $('#syncButton').addEventListener('click',openSyncModal);
+    $('#notificationButton').addEventListener('click',openNotificationsModal);
+    $('#settingsLogoutBtn').addEventListener('click',()=>confirmAction({title:'تسجيل الخروج',message:'هل تريد تسجيل الخروج من الحساب على هذا الجهاز؟',confirmText:'تسجيل الخروج',onConfirm:()=>window.ShahdCloud.forceLogout('تم تسجيل الخروج.')}));
+    window.addEventListener('shahd:sync-status',e=>updateSyncStatus(e.detail||{}));
+    window.ShahdCloud.queueCount().then(count=>updateSyncStatus({count,online:navigator.onLine!==false}));
     window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstallPrompt=e;});
     window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;toast('تم تثبيت التطبيق على الجهاز.');});
     document.addEventListener('keydown',e=>{if(e.key==='Escape'){const closeBtn=$('#modalClose');if(closeBtn)closeBtn.click();else closeSidebar();}});
   }
 
   function initPwa() {
-    if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(err=>console.warn('SW',err)));}
+    if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(reg=>reg.update().catch(()=>{})).catch(err=>console.warn('SW',err)));}
   }
 
-  applyTheme();bindEvents();renderAll();initPwa();
+  async function boot() {
+    applyTheme();
+    const cloud = await window.ShahdCloud.start(cloneDefaults);
+    state = { ...cloneDefaults(), ...(cloud?.state || {}) };
+    state.settings = { ...defaults.settings, ...(state.settings || {}) };
+    if(!can(PERMISSIONS.viewForRoute?.dashboard)){const first=Object.entries(PERMISSIONS.viewForRoute||{}).find(([view,perm])=>view!=='project-details'&&can(perm));if(first)activeView=first[0];}
+    bindEvents(); navigate(activeView); initPwa();
+    window.addEventListener('shahd:state-remote', e => {
+      if (!e.detail?.state) return;
+      state = { ...cloneDefaults(), ...e.detail.state, settings:{...defaults.settings,...(e.detail.state.settings||{})} };
+      renderAll();
+    });
+    window.addEventListener('shahd:session-ready', e => {
+      if (!e.detail?.state) return;
+      state = { ...cloneDefaults(), ...e.detail.state, settings:{...defaults.settings,...(e.detail.state.settings||{})} };
+      const routePerm=PERMISSIONS.viewForRoute?.[activeView];
+      if(routePerm&&!can(routePerm)){const first=Object.entries(PERMISSIONS.viewForRoute||{}).find(([view,perm])=>view!=='project-details'&&can(perm));activeView=first?.[0]||'dashboard';}
+      navigate(activeView);
+    });
+    window.addEventListener('shahd:logout', () => { $('#modalRoot').innerHTML=''; closeSidebar(); });
+  }
+  boot().catch(err => { console.error(err); const box=$('#loginStatus'); if(box){box.textContent=err?.message||'تعذر تشغيل النظام.';box.className='login-status error show';} });
 })();

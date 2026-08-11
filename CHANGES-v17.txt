@@ -1,0 +1,15 @@
+SHAHD v17 — Final login/admin reliability fixes
+
+- Fixed company creation error: Cannot read properties of null (reading 'reset').
+- Newly created company now appears immediately; no manual refresh is required.
+- Admin company cards now show the manager username clearly.
+- New companies default manager username to: admin.
+- Login accepts the actual manager username and, for legacy manager accounts only, the aliases admin / manager.
+- Company keys are matched robustly with or without dashes/spaces.
+- Login errors now distinguish: company key not found, username not found, wrong password, stopped/expired key.
+- Old PBKDF2 passwords remain supported and are upgraded after successful online login.
+- Network/database failures are no longer incorrectly reported as a wrong password.
+- Admin can edit the manager username, reset manager password, stop/start/extend/delete company key.
+- Company creation performs read-back verification before reporting success.
+- Arrears PDF report remains available from the arrears screen.
+- PWA cache bumped to v17 to remove stale v16 files.
