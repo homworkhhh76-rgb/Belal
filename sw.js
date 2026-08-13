@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shahd-accounting-v21-safe-debt-reports';
+const CACHE_NAME = 'shahd-accounting-v22-pdf-fix';
 const ASSETS = [
   './','./index.html','./styles.css','./permissions.js','./shahd-turso.js','./auth-sync.js','./app.js',
   './manifest.webmanifest','./shahd-logo.jpg','./icon-192.png','./icon-512.png'

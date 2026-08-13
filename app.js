@@ -641,6 +641,12 @@
     return new Blob(chunks,{type:'application/pdf'});
   }
 
+  // v22 compatibility: debt reports use the same internal PDF builder as arrears reports.
+  // Keep this alias so older cached handlers cannot fail with an undefined function.
+  async function buildPdfFromJpegPages(pages) {
+    return jpegPagesToPdf(pages);
+  }
+
   function debtPaidUnits(debt) {
     return state.debtPayments.filter(p=>p.debtId===debt.id && p.currency===debt.currency).reduce((s,p)=>s+toUnits(p.amount,debt.currency),0n);
   }
@@ -931,7 +937,7 @@
         ctx.fillStyle=muted;ctx.font='500 15px Cairo, Tahoma, Arial';ctx.fillText(`صفحة ${pageIndex+1} من ${pagesCount} • ${state.settings.companyName}`,W-M,H-48);
         const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.92));if(!blob)throw new Error('تعذر تجهيز التقرير.');pageBlobs.push({blob,width:W,height:H});
       }
-      const pdfBlob=await buildPdfFromJpegPages(pageBlobs),safeName=String(d.name||'debt').replace(/[\\/:*?"<>|]+/g,'-').slice(0,40),fileName=`debt-report-${safeName}-${today()}.pdf`;
+      const pdfBlob=await jpegPagesToPdf(pageBlobs),safeName=String(d.name||'debt').replace(/[\\/:*?"<>|]+/g,'-').slice(0,40),fileName=`debt-report-${safeName}-${today()}.pdf`;
       const file=new File([pdfBlob],fileName,{type:'application/pdf'});
       if(navigator.share&&(!navigator.canShare||navigator.canShare({files:[file]}))){try{await navigator.share({title:'كشف حساب دين تفصيلي',text:`كشف حساب ${d.name}`,files:[file]});toast('تم تجهيز التقرير للمشاركة.');return}catch(err){if(err?.name==='AbortError')return}}
       downloadBlob(pdfBlob,fileName);toast('تم إنشاء التقرير التفصيلي PDF.');
