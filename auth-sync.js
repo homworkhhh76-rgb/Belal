@@ -8,6 +8,7 @@
   const LEGACY_STATE_KEY = 'shahd_property_accounting_v1';
   const COMPANY_HINT_KEY = 'shahd_company_key_hint_v1';
   const ACTIVE_PROFILE_KEY = 'shahd_active_profile_v19';
+  const SYNC_SAFETY_VERSION = 21;
   const DEVICE_KEY = 'shahd_device_id_v1';
   const STATE_COLLECTIONS = ['projects','buildings','tenants','movements','debts','debtPayments'];
   const SETTINGS_ENTITY_ID = '__settings__';
@@ -157,6 +158,10 @@
     await new Promise((resolve,reject)=>{
       const tx=db.transaction('queue','readwrite'),store=tx.objectStore('queue');
       for(const op of ops){
+        // v21 data-safety: synchronization is non-destructive. A missing local row is never
+        // allowed to become a cloud delete event. This prevents an empty/new device from
+        // wiping records that exist on another device.
+        if(op.action==='delete')continue;
         if(!canWriteEntity(op.entityType,op.action))continue;
         const qk=queueKey(companyId,op.entityType,op.entityId),g=store.get(qk);
         g.onsuccess=()=>{
@@ -175,7 +180,8 @@
     for(const type of STATE_COLLECTIONS){
       const before=new Map((previous?.[type]||[]).filter(x=>x?.id).map(x=>[String(x.id),x])),after=new Map((next?.[type]||[]).filter(x=>x?.id).map(x=>[String(x.id),x]));
       for(const [id,a] of after){const b=before.get(id);if(!b)ops.push({entityType:type,entityId:id,action:'create',payload:a,patch:a,baseRev:0});else if(JSON.stringify(b)!==JSON.stringify(a))ops.push({entityType:type,entityId:id,action:'edit',payload:a,patch:objectPatch(b,a),baseRev:await getRecordRev(companyId,type,id)})}
-      for(const [id] of before)if(!after.has(id))ops.push({entityType:type,entityId:id,action:'delete',payload:{},patch:{},baseRev:await getRecordRev(companyId,type,id)});
+      // Intentionally do not infer deletions from absence in the local state.
+      // Local state can be partial, permission-filtered, stale, or from a newly added device.
     }
     if(JSON.stringify(previous?.settings||{})!==JSON.stringify(next?.settings||{})){
       const baseRev=await getRecordRev(companyId,'settings',SETTINGS_ENTITY_ID);ops.push({entityType:'settings',entityId:SETTINGS_ENTITY_ID,action:baseRev?'edit':'create',payload:next.settings||{},patch:baseRev?objectPatch(previous?.settings||{},next.settings||{}):next.settings||{},baseRev});
@@ -204,8 +210,8 @@
     if(!changes?.length||!currentState)return false;let changed=false;
     for(const rec of changes){const type=rec.entityType,id=String(rec.entityId),rev=Number(rec.remoteRev||0),key=`${type}::${id}`,queued=queueMap.get(key);let payload=rec.payload&&typeof rec.payload==='object'?rec.payload:{};
       if(queued){queued.baseRev=rev;if(queued.action==='edit'){payload={...payload,...(queued.patch||{})};queued.payload=clone(payload);await putOne('queue',queued);if(type==='settings')currentState.settings=payload;else{const coll=currentState[type]||(currentState[type]=[]),idx=coll.findIndex(x=>String(x.id)===id);if(idx>=0)coll[idx]=payload;else coll.push(payload)}changed=true}else await putOne('queue',queued);await setRecordRev(currentSession.companyId,type,id,rev);continue}
-      if(type==='settings'){currentState.settings=rec.deleted?{}:payload;changed=true}
-      else if(STATE_COLLECTIONS.includes(type)){const coll=currentState[type]||(currentState[type]=[]),idx=coll.findIndex(x=>String(x.id)===id);if(rec.deleted){if(idx>=0){coll.splice(idx,1);changed=true}}else if(idx>=0){coll[idx]=payload;changed=true}else{coll.push(payload);changed=true}}
+      if(type==='settings'){if(!rec.deleted){currentState.settings=payload;changed=true}}
+      else if(STATE_COLLECTIONS.includes(type)){const coll=currentState[type]||(currentState[type]=[]),idx=coll.findIndex(x=>String(x.id)===id);if(rec.deleted){/* v21 safety: keep the existing local record; cloud tombstones never erase accounting data */}else if(idx>=0){coll[idx]=payload;changed=true}else{coll.push(payload);changed=true}}
       await setRecordRev(currentSession.companyId,type,id,rev);
     }
     if(changed){lastLocalState=clone(currentState);await putOne('states',{companyId:stateKey(currentSession.companyId),tenantId:currentSession.companyId,state:clone(currentState),updatedAt:now()});window.dispatchEvent(new CustomEvent('shahd:state-remote',{detail:{state:clone(currentState)}}))}
@@ -282,13 +288,17 @@
     syncing=true;lastSyncError='';emitStatus();
     try{
       await T.ensureSchema();await validateRemoteSession(false);await migrateLegacyCloudRecords();
-      const items=await queueItems(),batch=items.slice(0,BATCH_SIZE),since=await getCursor(currentSession.companyId),types=allowedTypes();
+      const items=await queueItems();
+      // Drop any destructive delete operations left in the local queue by older releases
+      // before they can ever reach the cloud.
+      for(const q of items)if(q.action==='delete')await deleteOne('queue',q.queueKey);
+      const safeItems=items.filter(q=>q.action!=='delete'),batch=safeItems.slice(0,BATCH_SIZE),since=await getCursor(currentSession.companyId),types=allowedTypes();
       const statements=batch.map(q=>({sql:`INSERT OR IGNORE INTO shahd_events(op_id,company_id,entity_type,entity_id,action,payload,created_at,updated_by,device_id) VALUES(?,?,?,?,?,?,?,?,?)`,args:[q.opId||q.queueKey,currentSession.companyId,q.entityType,q.entityId,q.action,JSON.stringify(q.action==='delete'?{}:q.payload||{}),now(),currentSession.userId,deviceId()]}));
       let changeIndex=-1,maxIndex=-1;
       if(types.length){
         const marks=types.map(()=>'?').join(',');
-        if(since===0){changeIndex=statements.length;statements.push({sql:`SELECT e.id,e.entity_type,e.entity_id,e.action,e.payload FROM shahd_events e JOIN (SELECT entity_type,entity_id,MAX(id) AS max_id FROM shahd_events WHERE company_id=? AND entity_type IN (${marks}) GROUP BY entity_type,entity_id) x ON x.max_id=e.id ORDER BY e.id ASC`,args:[currentSession.companyId,...types]})}
-        else{changeIndex=statements.length;statements.push({sql:`SELECT id,entity_type,entity_id,action,payload FROM shahd_events WHERE company_id=? AND id>? AND entity_type IN (${marks}) ORDER BY id ASC LIMIT ?`,args:[currentSession.companyId,since,...types,PULL_LIMIT]})}
+        if(since===0){changeIndex=statements.length;statements.push({sql:`SELECT e.id,e.entity_type,e.entity_id,e.action,e.payload FROM shahd_events e JOIN (SELECT entity_type,entity_id,MAX(id) AS max_id FROM shahd_events WHERE company_id=? AND action<>'delete' AND entity_type IN (${marks}) GROUP BY entity_type,entity_id) x ON x.max_id=e.id ORDER BY e.id ASC`,args:[currentSession.companyId,...types]})}
+        else{changeIndex=statements.length;statements.push({sql:`SELECT id,entity_type,entity_id,action,payload FROM shahd_events WHERE company_id=? AND id>? AND action<>'delete' AND entity_type IN (${marks}) ORDER BY id ASC LIMIT ?`,args:[currentSession.companyId,since,...types,PULL_LIMIT]})}
       }
       maxIndex=statements.length;statements.push({sql:`SELECT COALESCE(MIN(id),0) AS min_id,COALESCE(MAX(id),0) AS max_id FROM shahd_events WHERE company_id=?`,args:[currentSession.companyId]});
       const results=await T.pipelineRaw(statements,Math.max(45000,1200*statements.length));
@@ -317,7 +327,7 @@
     if(now()-last<7*24*60*60*1000)return;
     localStorage.setItem(key,String(now()));
     try{
-      await T.execute(`DELETE FROM shahd_events WHERE company_id=? AND id < (SELECT COALESCE(MAX(id),0)-5000 FROM shahd_events WHERE company_id=?) AND id NOT IN (SELECT MAX(id) FROM shahd_events WHERE company_id=? GROUP BY entity_type,entity_id)`,[currentSession.companyId,currentSession.companyId,currentSession.companyId],60000);
+      await T.execute(`DELETE FROM shahd_events WHERE company_id=? AND id < (SELECT COALESCE(MAX(id),0)-5000 FROM shahd_events WHERE company_id=?) AND id NOT IN (SELECT MAX(id) FROM shahd_events WHERE company_id=? GROUP BY entity_type,entity_id) AND id NOT IN (SELECT MAX(id) FROM shahd_events WHERE company_id=? AND action<>'delete' GROUP BY entity_type,entity_id)`,[currentSession.companyId,currentSession.companyId,currentSession.companyId,currentSession.companyId],60000);
     }catch(_){localStorage.removeItem(key)}
   }
 

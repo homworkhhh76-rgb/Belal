@@ -346,7 +346,7 @@
 
   function projectDebtTableMarkup(list,isClosed=false) {
     if(!list.length)return `<div class="empty">لا توجد سجلات في هذا القسم للمشروع.</div>`;
-    return `<table><thead><tr><th>النوع</th><th>الاسم / الجهة</th><th>المبلغ الأصلي</th><th>المدفوع / المحصّل</th><th>المتبقي</th><th>${isClosed?'تاريخ الإنهاء':'تاريخ الدين'}</th><th>ملاحظات</th><th>إجراءات</th></tr></thead><tbody>${list.map(d=>{const direction=d.direction||'receivable',paid=debtPaidUnits(d),rem=debtRemainingUnits(d),op=direction==='receivable'?'تحصيل':'سداد';return `<tr><td><span class="badge ${direction==='receivable'?'badge-green':'badge-red'}">${direction==='receivable'?'دين لنا':'دين علينا'}</span></td><td><strong>${escapeHtml(d.name)}</strong></td><td>${formatMoney(d.amount,d.currency)}</td><td class="${direction==='receivable'?'money-in':'money-out'}">${formatMoney(paid,d.currency,true)}</td><td class="${rem>0n?'money-out':'money-in'}">${formatMoney(rem,d.currency,true)}</td><td>${dateLabel(isClosed?d.completedDate:d.date)}</td><td>${escapeHtml(d.notes||'—')}</td><td><div class="actions">${d.status!=='closed'?`<button class="btn btn-primary btn-sm" data-debt-payment="${d.id}">${op}</button>`:''}${paid>0n?`<button class="btn btn-ghost btn-sm" data-debt-history="${d.id}">السجل</button>`:''}<button class="btn btn-ghost btn-sm btn-icon" data-edit-debt="${d.id}" title="تعديل"><svg class="icon"><use href="#i-edit"/></svg></button><button class="btn btn-danger-soft btn-sm btn-icon" data-delete-debt="${d.id}" title="حذف"><svg class="icon"><use href="#i-trash"/></svg></button></div></td></tr>`}).join('')}</tbody></table>`;
+    return `<table><thead><tr><th>النوع</th><th>الاسم / الجهة</th><th>المبلغ الأصلي</th><th>المدفوع / المحصّل</th><th>المتبقي</th><th>${isClosed?'تاريخ الإنهاء':'تاريخ الدين'}</th><th>ملاحظات</th><th>إجراءات</th></tr></thead><tbody>${list.map(d=>{const direction=d.direction||'receivable',paid=debtPaidUnits(d),rem=debtRemainingUnits(d),op=direction==='receivable'?'تحصيل':'سداد';return `<tr><td><span class="badge ${direction==='receivable'?'badge-green':'badge-red'}">${direction==='receivable'?'دين لنا':'دين علينا'}</span></td><td><strong>${escapeHtml(d.name)}</strong></td><td>${formatMoney(d.amount,d.currency)}</td><td class="${direction==='receivable'?'money-in':'money-out'}">${formatMoney(paid,d.currency,true)}</td><td class="${rem>0n?'money-out':'money-in'}">${formatMoney(rem,d.currency,true)}</td><td>${dateLabel(isClosed?d.completedDate:d.date)}</td><td>${escapeHtml(d.notes||'—')}</td><td><div class="actions debt-row-actions"><button class="btn btn-report btn-sm" data-debt-report="${d.id}"><svg class="icon"><use href="#i-chart"/></svg><span>تقرير تفصيلي</span></button>${d.status!=='closed'?`<button class="btn btn-primary btn-sm" data-debt-payment="${d.id}">${op}</button>`:''}${paid>0n?`<button class="btn btn-ghost btn-sm" data-debt-history="${d.id}">السجل</button>`:''}<button class="btn btn-ghost btn-sm btn-icon" data-edit-debt="${d.id}" title="تعديل"><svg class="icon"><use href="#i-edit"/></svg></button><button class="btn btn-danger-soft btn-sm btn-icon" data-delete-debt="${d.id}" title="حذف"><svg class="icon"><use href="#i-trash"/></svg></button></div></td></tr>`}).join('')}</tbody></table>`;
   }
 
   function renderProjectDetails() {
@@ -672,7 +672,7 @@
       const directionBadge=direction==='receivable'?'<span class="badge badge-green">دين لنا</span>':'<span class="badge badge-red">دين علينا</span>';
       const actionLabel=direction==='receivable'?'تحصيل':'سداد';
       const project=projectById(d.projectId);
-      return `<tr><td>${directionBadge}</td><td>${project?`<span class="badge badge-blue">${escapeHtml(project.name)}</span>`:'—'}</td><td><strong>${escapeHtml(d.name)}</strong></td><td>${escapeHtml(d.phone||'—')}<br><small>${escapeHtml(d.idNumber||'')}</small></td><td>${formatMoney(d.amount,d.currency)}</td><td class="${direction==='receivable'?'money-in':'money-out'}">${formatMoney(paid,d.currency,true)}</td><td class="${rem>0n?'money-out':'money-in'}">${formatMoney(rem,d.currency,true)}</td><td>${dateLabel(d.status==='closed'?d.completedDate:d.date)}</td><td>${escapeHtml(d.notes||'—')}</td><td><div class="actions">${d.status!=='closed'?`<button class="btn btn-primary btn-sm" data-debt-payment="${d.id}">${actionLabel}</button>`:''}${paid>0n?`<button class="btn btn-ghost btn-sm" data-debt-history="${d.id}">السجل</button>`:''}<button class="btn btn-ghost btn-sm btn-icon" data-edit-debt="${d.id}" title="تعديل"><svg class="icon"><use href="#i-edit"/></svg></button><button class="btn btn-danger-soft btn-sm btn-icon" data-delete-debt="${d.id}" title="حذف"><svg class="icon"><use href="#i-trash"/></svg></button></div></td></tr>`;
+      return `<tr><td>${directionBadge}</td><td>${project?`<span class="badge badge-blue">${escapeHtml(project.name)}</span>`:'—'}</td><td><strong>${escapeHtml(d.name)}</strong></td><td>${escapeHtml(d.phone||'—')}<br><small>${escapeHtml(d.idNumber||'')}</small></td><td>${formatMoney(d.amount,d.currency)}</td><td class="${direction==='receivable'?'money-in':'money-out'}">${formatMoney(paid,d.currency,true)}</td><td class="${rem>0n?'money-out':'money-in'}">${formatMoney(rem,d.currency,true)}</td><td>${dateLabel(d.status==='closed'?d.completedDate:d.date)}</td><td>${escapeHtml(d.notes||'—')}</td><td><div class="actions debt-row-actions"><button class="btn btn-report btn-sm" data-debt-report="${d.id}"><svg class="icon"><use href="#i-chart"/></svg><span>تقرير تفصيلي</span></button>${d.status!=='closed'?`<button class="btn btn-primary btn-sm" data-debt-payment="${d.id}">${actionLabel}</button>`:''}${paid>0n?`<button class="btn btn-ghost btn-sm" data-debt-history="${d.id}">السجل</button>`:''}<button class="btn btn-ghost btn-sm btn-icon" data-edit-debt="${d.id}" title="تعديل"><svg class="icon"><use href="#i-edit"/></svg></button><button class="btn btn-danger-soft btn-sm btn-icon" data-delete-debt="${d.id}" title="حذف"><svg class="icon"><use href="#i-trash"/></svg></button></div></td></tr>`;
     }).join('')}</tbody></table>`:`<div class="empty">${emptyText}</div>`;
   }
 
@@ -811,8 +811,8 @@
     const rem=debtRemainingUnits(d), c=d.currency, direction=d.direction||'receivable';
     const isReceivable=direction==='receivable';
     const operation=isReceivable?'تحصيل':'سداد';
-    const body=`<div class="form-grid"><div class="field full"><span>الحساب</span><div class="form-note"><strong>${escapeHtml(d.name)}</strong> — ${isReceivable?'لنا عنده':'علينا له'} — المتبقي ${formatMoney(rem,c,true)}</div></div>${field('amount',`قيمة ${operation}`,unitsToDecimal(rem,c,false),'number',`min="0" step="${CURRENCY_META[c].precision===2?'0.01':'0.001'}" required`)}${field('date',`تاريخ ${operation}`,today(),'date','required')}${field('executor','المنفذ',state.settings.defaultExecutor||'')}${textareaField('notes','ملاحظات','')}</div><div class="form-note">سيتم تسجيل ${isReceivable?'وارد':'مصروف'} تلقائياً بقيمة العملية في الحركة اليومية وبنفس العملة.</div>`;
-    showModal({title:`تسجيل ${operation} دين`,subtitle:`${isReceivable?'دين لنا':'دين علينا'} — العملة: ${CURRENCY_META[c].label}`,icon:'i-check',body,submitText:`حفظ ${operation}`,onSubmit:(fd)=>{
+    const body=`<div class="debt-payment-head"><div><small>الحساب</small><strong>${escapeHtml(d.name)}</strong></div><div><small>المبلغ المتبقي</small><strong class="${isReceivable?'money-in':'money-out'}">${formatMoney(rem,c,true)}</strong></div></div><div class="form-grid">${field('amount',`قيمة ${operation}`,unitsToDecimal(rem,c,false),'number',`min="0" step="${CURRENCY_META[c].precision===2?'0.01':'0.001'}" required`)}${field('date',`تاريخ ${operation}`,today(),'date','required')}${field('executor','المنفذ',state.settings.defaultExecutor||'')}${textareaField('notes','ملاحظات','')}</div><div class="form-note">سيتم تسجيل ${isReceivable?'وارد':'مصروف'} تلقائياً بقيمة العملية في الحركة اليومية وبنفس العملة.${isReceivable?' وبعد الحفظ سيظهر سند قبض جاهز للتنزيل أو الإرسال عبر واتساب أو رسالة جوال.':''}</div>`;
+    showModal({title:`تسجيل ${operation} دين`,subtitle:`${isReceivable?'دين لنا':'دين علينا'} — العملة: ${CURRENCY_META[c].label}`,icon:'i-check',body,submitText:`حفظ ${operation}`,onSubmit:(fd,form,close)=>{
       const amount=normalizeAmount(fd.get('amount'),c),u=toUnits(amount,c);
       if(u<=0n){toast(`أدخل قيمة ${operation} صحيحة.`,'error');return false;}
       if(u>rem){toast(`قيمة ${operation} أكبر من المبلغ المتبقي.`,'error');return false;}
@@ -823,20 +823,119 @@
       const movementId=uid('m');
       const movement={id:movementId,type:'general',date,executor,projectId:d.projectId||'',buildingId:'',tenantId:'',account:d.name,detail:`${operation} دين ${isReceivable?'من':'إلى'} ${d.name}`,notes:notes||`مرتبط بالدين ${d.name}`,amounts,receiptNo:isReceivable?makeReceiptNo():'',debtId:d.id,debtPaymentId:paymentId,createdAt:new Date().toISOString()};
       state.movements.push(movement);
-      state.debtPayments.push({id:paymentId,debtId:d.id,movementId,amount,currency:c,date,executor,notes,createdAt:new Date().toISOString()});
+      state.debtPayments.push({id:paymentId,debtId:d.id,movementId,amount,currency:c,date,executor,notes,receiptNo:movement.receiptNo||'',createdAt:new Date().toISOString()});
       const after=rem-u;
       if(after===0n){d.status='closed';d.completedDate=date;if(d.projectId===activeProjectId&&activeView==='project-details')activeProjectTab='closed';toast(`تم ${operation} الدين بالكامل ونقله إلى «تم السداد والانتهاء».`);}else {if(d.projectId===activeProjectId&&activeView==='project-details')activeProjectTab=direction;toast(`تم تسجيل ${operation}. المتبقي ${formatMoney(after,c,true)}.`);}
-      saveState();return true;
+      saveState();
+      if(isReceivable){
+        close();
+        setTimeout(()=>openReceiptActions(movementId),90);
+        return false;
+      }
+      return true;
     }});
   }
-
 
   function openDebtHistoryModal(debtId) {
     const d=debtById(debtId); if(!d)return;
     const direction=d.direction||'receivable', operation=direction==='receivable'?'تحصيل':'سداد';
     const payments=state.debtPayments.filter(p=>p.debtId===d.id).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.createdAt||'').localeCompare(a.createdAt||''));
-    const body=payments.length?`<div class="table-wrap"><table style="min-width:620px"><thead><tr><th>التاريخ</th><th>العملية</th><th>القيمة</th><th>المنفذ</th><th>ملاحظات</th><th>إجراء</th></tr></thead><tbody>${payments.map(p=>`<tr><td>${dateLabel(p.date)}</td><td><span class="badge ${direction==='receivable'?'badge-green':'badge-red'}">${operation}</span></td><td><strong>${formatMoney(p.amount,p.currency)}</strong></td><td>${escapeHtml(p.executor||'—')}</td><td>${escapeHtml(p.notes||'—')}</td><td><button class="btn btn-danger-soft btn-sm" data-delete-debt-payment="${p.id}">حذف العملية</button></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">لا توجد عمليات ${operation} مسجلة على هذا الدين.</div>`;
+    const body=payments.length?`<div class="table-wrap"><table style="min-width:760px"><thead><tr><th>التاريخ</th><th>العملية</th><th>القيمة</th><th>المنفذ</th><th>ملاحظات</th><th>إجراء</th></tr></thead><tbody>${payments.map(p=>`<tr><td>${dateLabel(p.date)}</td><td><span class="badge ${direction==='receivable'?'badge-green':'badge-red'}">${operation}</span></td><td><strong>${formatMoney(p.amount,p.currency)}</strong></td><td>${escapeHtml(p.executor||'—')}</td><td>${escapeHtml(p.notes||'—')}</td><td><div class="actions">${direction==='receivable'&&p.movementId?`<button class="btn btn-primary btn-sm" data-debt-payment-receipt="${p.id}"><svg class="icon"><use href="#i-receipt"/></svg>سند قبض</button>`:''}<button class="btn btn-danger-soft btn-sm" data-delete-debt-payment="${p.id}">حذف العملية</button></div></td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">لا توجد عمليات ${operation} مسجلة على هذا الدين.</div>`;
     showModal({title:`سجل ${operation} الدين`,subtitle:`${d.name} — المتبقي ${formatMoney(debtRemainingUnits(d),d.currency,true)}`,icon:'i-debt',body,size:'lg',hideSubmit:true});
+  }
+
+  function debtReportText(debtId) {
+    const d=debtById(debtId); if(!d)return '';
+    const direction=d.direction||'receivable', paid=debtPaidUnits(d), remaining=debtRemainingUnits(d);
+    const payments=state.debtPayments.filter(p=>p.debtId===d.id).sort((a,b)=>(a.date||'').localeCompare(b.date||'')||(a.createdAt||'').localeCompare(b.createdAt||''));
+    const project=projectById(d.projectId);
+    const lines=[
+      `كشف حساب تفصيلي — ${direction==='receivable'?'دين لنا':'دين علينا'}`,
+      `الاسم / الجهة: ${d.name}`,
+      d.phone?`رقم الجوال: ${d.phone}`:'',
+      d.idNumber?`الهوية / المرجع: ${d.idNumber}`:'',
+      project?`المشروع: ${project.name}`:'',
+      `تاريخ تسجيل الدين: ${dateLabel(d.date)}`,
+      `المبلغ الأصلي: ${formatMoney(d.amount,d.currency)}`,
+      `إجمالي ${direction==='receivable'?'التحصيلات':'الدفعات'}: ${formatMoney(paid,d.currency,true)}`,
+      `المتبقي: ${formatMoney(remaining,d.currency,true)}`,
+      `الحالة: ${d.status==='closed'?'تم السداد والانتهاء':'مفتوح'}`,
+      '',
+      `سجل ${direction==='receivable'?'التحصيلات':'الدفعات'}:`
+    ].filter(x=>x!==null&&x!==undefined);
+    if(payments.length) payments.forEach((p,i)=>lines.push(`${i+1}) ${dateLabel(p.date)} — ${formatMoney(p.amount,p.currency)} — ${p.executor||'بدون منفذ'}${p.notes?` — ${p.notes}`:''}`));
+    else lines.push('لا توجد دفعات مسجلة حتى الآن.');
+    if(d.notes){lines.push('',`ملاحظات الدين: ${d.notes}`);}
+    lines.push('','إدارة شركة شهد للتجارة العامة والمقاولات');
+    return lines.join('\n');
+  }
+
+  function sendDebtReportWhatsApp(debtId) {
+    const d=debtById(debtId); if(!d)return;
+    const number=normalizeWhatsAppNumber(d.phone||'');
+    if(!number){toast('لا يوجد رقم جوال محفوظ لهذا الحساب.','error');return;}
+    window.open(`https://wa.me/${number}?text=${encodeURIComponent(debtReportText(debtId))}`,'_blank','noopener');
+  }
+
+  function sendDebtReportSms(debtId) {
+    const d=debtById(debtId); if(!d)return;
+    const phone=String(d.phone||'').trim().replace(/[^0-9+]/g,'');
+    if(!phone){toast('لا يوجد رقم جوال محفوظ لهذا الحساب.','error');return;}
+    const separator=/iPhone|iPad|iPod/i.test(navigator.userAgent)?'&':'?';
+    window.location.href=`sms:${phone}${separator}body=${encodeURIComponent(debtReportText(debtId))}`;
+  }
+
+  function openDebtDetailedReport(debtId) {
+    const d=debtById(debtId); if(!d)return;
+    const direction=d.direction||'receivable', paid=debtPaidUnits(d), rem=debtRemainingUnits(d), total=toUnits(d.amount,d.currency);
+    const payments=state.debtPayments.filter(p=>p.debtId===d.id).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.createdAt||'').localeCompare(a.createdAt||''));
+    const project=projectById(d.projectId);
+    const pct=total>0n?Math.min(100,Math.round(Number(paid*10000n/total)/100)):0;
+    const body=`<div class="debt-report-hero"><div><span class="badge ${direction==='receivable'?'badge-green':'badge-red'}">${direction==='receivable'?'دين لنا':'دين علينا'}</span><h3>${escapeHtml(d.name)}</h3><p>${escapeHtml([d.phone,d.idNumber].filter(Boolean).join(' • ')||'بدون بيانات اتصال')}</p></div><div class="debt-report-status"><small>الحالة</small><strong>${d.status==='closed'?'تم السداد والانتهاء':'مفتوح'}</strong></div></div>
+    <div class="debt-report-stats"><div><small>المبلغ الأصلي</small><strong>${formatMoney(total,d.currency,true)}</strong></div><div><small>إجمالي ${direction==='receivable'?'التحصيلات':'الدفعات'}</small><strong class="${direction==='receivable'?'money-in':'money-out'}">${formatMoney(paid,d.currency,true)}</strong></div><div><small>المتبقي</small><strong class="${rem>0n?'money-out':'money-in'}">${formatMoney(rem,d.currency,true)}</strong></div><div><small>نسبة التسوية</small><strong>${pct}%</strong></div></div>
+    <div class="debt-progress"><span style="width:${pct}%"></span></div>
+    <div class="debt-report-meta"><div><small>تاريخ الدين</small><strong>${dateLabel(d.date)}</strong></div><div><small>المشروع</small><strong>${escapeHtml(project?.name||'حساب عام')}</strong></div><div><small>العملة</small><strong>${CURRENCY_META[d.currency]?.label||d.currency}</strong></div><div><small>تاريخ الإنهاء</small><strong>${d.completedDate?dateLabel(d.completedDate):'—'}</strong></div></div>
+    ${d.notes?`<div class="debt-report-notes"><small>ملاحظات</small><p>${escapeHtml(d.notes)}</p></div>`:''}
+    <div class="debt-report-section-title"><h4>سجل ${direction==='receivable'?'التحصيلات':'الدفعات'}</h4><span>${payments.length} عملية</span></div>
+    ${payments.length?`<div class="debt-report-timeline">${payments.map((p,i)=>`<div class="debt-report-payment"><div class="debt-report-index">${payments.length-i}</div><div class="debt-report-payment-main"><strong>${formatMoney(p.amount,p.currency)}</strong><span>${dateLabel(p.date)} • ${escapeHtml(p.executor||'بدون منفذ')}</span>${p.notes?`<small>${escapeHtml(p.notes)}</small>`:''}</div>${direction==='receivable'&&p.movementId?`<button class="btn btn-primary btn-sm" type="button" data-debt-payment-receipt="${p.id}"><svg class="icon"><use href="#i-receipt"/></svg>سند قبض</button>`:''}</div>`).join('')}</div>`:`<div class="empty">لا توجد دفعات مسجلة على هذا الدين حتى الآن.</div>`}`;
+    const {form}=showModal({title:'التقرير التفصيلي للدين',subtitle:`كشف حساب كامل محفوظ من السجل المالي`,icon:'i-chart',body,size:'lg',hideSubmit:true,extraFooter:`<button class="btn btn-primary" type="button" id="debtReportPdfBtn"><svg class="icon"><use href="#i-download"/></svg>PDF</button><button class="btn btn-whatsapp" type="button" id="debtReportWhatsappBtn">واتساب</button><button class="btn btn-ghost" type="button" id="debtReportSmsBtn">رسالة جوال</button>`});
+    $('#debtReportPdfBtn',form)?.addEventListener('click',()=>exportDebtDetailedPdf(debtId));
+    $('#debtReportWhatsappBtn',form)?.addEventListener('click',()=>sendDebtReportWhatsApp(debtId));
+    $('#debtReportSmsBtn',form)?.addEventListener('click',()=>sendDebtReportSms(debtId));
+  }
+
+  async function exportDebtDetailedPdf(debtId) {
+    const d=debtById(debtId); if(!d)return;
+    const direction=d.direction||'receivable', payments=state.debtPayments.filter(p=>p.debtId===d.id).sort((a,b)=>(a.date||'').localeCompare(b.date||'')||(a.createdAt||'').localeCompare(b.createdAt||''));
+    const paid=debtPaidUnits(d),rem=debtRemainingUnits(d),total=toUnits(d.amount,d.currency),project=projectById(d.projectId);
+    try{
+      try{await document.fonts?.ready}catch(_){ }
+      const W=1240,H=1754,M=70,brand='#0b67b2',green='#0f9d71',danger='#bb2d3b',text='#152033',muted='#69778d',line='#dbe4ee',soft='#f4f8fc';
+      let logo=null;try{logo=await loadImage('shahd-logo.jpg')}catch(_){logo=null}
+      const perPage=11,pagesCount=Math.max(1,Math.ceil(payments.length/perPage)),pageBlobs=[];
+      for(let pageIndex=0;pageIndex<pagesCount;pageIndex++){
+        const canvas=document.createElement('canvas');canvas.width=W;canvas.height=H;const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);ctx.direction='rtl';ctx.textAlign='right';
+        ctx.fillStyle=brand;ctx.fillRect(0,0,W,22);
+        if(logo){const maxW=330,maxH=150,ratio=Math.min(maxW/logo.width,maxH/logo.height);const w=logo.width*ratio,h=logo.height*ratio;ctx.drawImage(logo,W-M-w,48,w,h)}
+        ctx.fillStyle=text;ctx.font='800 42px Cairo, Tahoma, Arial';ctx.fillText('كشف حساب دين تفصيلي',W-M,245);ctx.fillStyle=muted;ctx.font='500 21px Cairo, Tahoma, Arial';ctx.fillText(`${direction==='receivable'?'دين لنا':'دين علينا'} • تاريخ الإصدار ${dateLabel(today())}`,W-M,285);
+        ctx.strokeStyle=line;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(M,315);ctx.lineTo(W-M,315);ctx.stroke();
+        const cardY=350,cardW=(W-2*M-45)/4,vals=[['المبلغ الأصلي',formatMoney(total,d.currency,true),text],['إجمالي '+(direction==='receivable'?'التحصيلات':'الدفعات'),formatMoney(paid,d.currency,true),direction==='receivable'?green:danger],['المتبقي',formatMoney(rem,d.currency,true),rem>0n?danger:green],['عدد العمليات',String(payments.length),brand]];
+        vals.forEach((v,i)=>{const x=W-M-(i+1)*cardW-i*15;ctx.fillStyle=soft;roundRect(ctx,x,cardY,cardW,125,18,true,false);ctx.fillStyle=muted;ctx.font='600 17px Cairo, Tahoma, Arial';ctx.fillText(v[0],x+cardW-20,cardY+38);ctx.fillStyle=v[2];ctx.font='800 25px Cairo, Tahoma, Arial';ctx.fillText(v[1],x+cardW-20,cardY+83)});
+        const infoY=520;ctx.fillStyle=text;ctx.font='800 29px Cairo, Tahoma, Arial';ctx.fillText(d.name,W-M,infoY);ctx.fillStyle=muted;ctx.font='500 18px Cairo, Tahoma, Arial';
+        const info=[d.phone&&`الجوال: ${d.phone}`,d.idNumber&&`الهوية/المرجع: ${d.idNumber}`,project&&`المشروع: ${project.name}`,`تاريخ الدين: ${dateLabel(d.date)}`,`الحالة: ${d.status==='closed'?'تم السداد والانتهاء':'مفتوح'}`].filter(Boolean);let iy=infoY+38;info.forEach(v=>{ctx.fillText(v,W-M,iy);iy+=30});
+        const tableY=700;ctx.fillStyle=brand;roundRect(ctx,M,tableY,W-2*M,58,14,true,false);ctx.fillStyle='#fff';ctx.font='700 18px Cairo, Tahoma, Arial';ctx.fillText('ملاحظات',W-M-40,tableY+37);ctx.fillText('المنفذ',W-M-390,tableY+37);ctx.fillText('المبلغ',W-M-650,tableY+37);ctx.fillText('التاريخ',W-M-890,tableY+37);
+        const slice=payments.slice(pageIndex*perPage,(pageIndex+1)*perPage);let y=tableY+76;ctx.font='500 17px Cairo, Tahoma, Arial';
+        if(!slice.length){ctx.fillStyle=muted;ctx.fillText('لا توجد دفعات مسجلة حتى الآن.',W-M,y+25)}
+        slice.forEach((pmt,idx)=>{ctx.fillStyle=idx%2===0?'#ffffff':soft;ctx.fillRect(M,y-10,W-2*M,70);ctx.fillStyle=text;ctx.fillText(String(pmt.notes||'—').slice(0,34),W-M-40,y+28);ctx.fillText(String(pmt.executor||'—').slice(0,18),W-M-390,y+28);ctx.font='700 18px Cairo, Tahoma, Arial';ctx.fillText(formatMoney(pmt.amount,pmt.currency),W-M-650,y+28);ctx.font='500 17px Cairo, Tahoma, Arial';ctx.fillText(dateLabel(pmt.date),W-M-890,y+28);y+=70});
+        if(d.notes&&pageIndex===pagesCount-1){ctx.fillStyle=soft;roundRect(ctx,M,1490,W-2*M,105,14,true,false);ctx.fillStyle=muted;ctx.font='600 16px Cairo, Tahoma, Arial';ctx.fillText('ملاحظات الدين',W-M-20,1525);ctx.fillStyle=text;ctx.font='500 17px Cairo, Tahoma, Arial';wrapText(ctx,d.notes,W-M-20,1560,W-2*M-40,25)}
+        ctx.fillStyle=muted;ctx.font='500 15px Cairo, Tahoma, Arial';ctx.fillText(`صفحة ${pageIndex+1} من ${pagesCount} • ${state.settings.companyName}`,W-M,H-48);
+        const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.92));if(!blob)throw new Error('تعذر تجهيز التقرير.');pageBlobs.push({blob,width:W,height:H});
+      }
+      const pdfBlob=await buildPdfFromJpegPages(pageBlobs),safeName=String(d.name||'debt').replace(/[\\/:*?"<>|]+/g,'-').slice(0,40),fileName=`debt-report-${safeName}-${today()}.pdf`;
+      const file=new File([pdfBlob],fileName,{type:'application/pdf'});
+      if(navigator.share&&(!navigator.canShare||navigator.canShare({files:[file]}))){try{await navigator.share({title:'كشف حساب دين تفصيلي',text:`كشف حساب ${d.name}`,files:[file]});toast('تم تجهيز التقرير للمشاركة.');return}catch(err){if(err?.name==='AbortError')return}}
+      downloadBlob(pdfBlob,fileName);toast('تم إنشاء التقرير التفصيلي PDF.');
+    }catch(err){toast(err?.message||'تعذر إنشاء تقرير الدين.','error')}
   }
 
   function deleteDebtPayment(paymentId) {
@@ -862,9 +961,10 @@
     ctx.direction='rtl';ctx.textAlign='right';ctx.fillStyle='#172033';ctx.font='bold 54px Cairo, Tahoma, Arial';ctx.fillText('سند قبض',1080,365);
     ctx.fillStyle='#6b778c';ctx.font='26px Cairo, Tahoma, Arial';ctx.fillText(`${state.settings.companyName} — ${state.settings.companySubtitle}`,1080,415);
     ctx.strokeStyle='#dfe6ef';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(120,455);ctx.lineTo(1080,455);ctx.stroke();
-    const tenant=tenantById(m.tenantId),building=buildingById(m.buildingId),project=projectById(m.projectId);
-    const accountName=building?.name||project?.name||m.account||'مركزي';
-    const rows=[['رقم السند',m.receiptNo||m.id],['التاريخ',dateLabel(m.date)],['استلمنا من',tenant?.name||m.account||building?.name||project?.name||'—'],['العقار / الحساب',accountName],['البيان',m.detail||'—'],['عن شهر',m.rentMonths?.length?m.rentMonths.map(monthLabel).join('، '):'—'],['المنفذ',m.executor||'—']];
+    const tenant=tenantById(m.tenantId),building=buildingById(m.buildingId),project=projectById(m.projectId),debt=debtById(m.debtId);
+    const accountName=building?.name||project?.name||m.account||debt?.name||'مركزي';
+    const receivedFrom=tenant?.name||debt?.name||m.account||building?.name||project?.name||'—';
+    const rows=[['رقم السند',m.receiptNo||m.id],['التاريخ',dateLabel(m.date)],['استلمنا من',receivedFrom],['العقار / الحساب',accountName],['البيان',m.detail||'—'],['عن شهر',m.rentMonths?.length?m.rentMonths.map(monthLabel).join('، '):debt?'تحصيل دفعة من دين':'—'],['المنفذ',m.executor||'—']];
     let y=525; ctx.font='bold 27px Cairo, Tahoma, Arial';
     rows.forEach(([label,value])=>{ctx.fillStyle='#6b778c';ctx.fillText(label,1080,y);ctx.fillStyle='#172033';ctx.font='bold 29px Cairo, Tahoma, Arial';wrapText(ctx,String(value),760,y,720,42);ctx.font='bold 27px Cairo, Tahoma, Arial';y+=88;});
     y+=10;ctx.fillStyle='#f4f7fb';roundRect(ctx,120,y,960,250,22,true,false);ctx.fillStyle='#0b4d8f';ctx.font='bold 31px Cairo, Tahoma, Arial';ctx.fillText('المبلغ المقبوض',1030,y+55);
@@ -883,13 +983,13 @@
 
   function receiptText(movementId) {
     const m=state.movements.find(x=>x.id===movementId); if(!m)return '';
-    const tenant=tenantById(m.tenantId),building=buildingById(m.buildingId),project=projectById(m.projectId);
+    const tenant=tenantById(m.tenantId),building=buildingById(m.buildingId),project=projectById(m.projectId),debt=debtById(m.debtId);
     const amounts=CURRENCIES.map(c=>{const u=toUnits(m.amounts?.[c]?.in||0,c);return u>0n?formatMoney(u,c,true):'';}).filter(Boolean).join(' + ');
     const months=m.rentMonths?.length?m.rentMonths.map(monthLabel).join('، '):'';
     return `سند قبض رقم ${m.receiptNo||m.id}
 التاريخ: ${dateLabel(m.date)}
-استلمنا من: ${tenant?.name||m.account||'—'}
-الحساب: ${building?.name||project?.name||m.account||'مركزي'}
+استلمنا من: ${tenant?.name||debt?.name||m.account||'—'}
+الحساب: ${building?.name||project?.name||debt?.name||m.account||'مركزي'}
 المبلغ: ${amounts||'—'}${months?`
 عن شهر: ${months}`:''}
 ${state.settings.companyName}`;
@@ -906,9 +1006,9 @@ ${state.settings.companyName}`;
 
   async function sendReceiptWhatsApp(movementId) {
     const m=state.movements.find(x=>x.id===movementId); if(!m)return;
-    const tenant=tenantById(m.tenantId);
-    const number=normalizeWhatsAppNumber(tenant?.phone||'');
-    if(!number){toast('لا يوجد رقم واتساب محفوظ للمستأجر. أضف رقم الجوال أولاً.','error');return;}
+    const tenant=tenantById(m.tenantId),debt=debtById(m.debtId);
+    const number=normalizeWhatsAppNumber(tenant?.phone||debt?.phone||'');
+    if(!number){toast('لا يوجد رقم واتساب محفوظ لهذا الحساب. أضف رقم الجوال أولاً.','error');return;}
     // افتح نافذة فوراً للحفاظ على صلاحية فتح واتساب بعد تجهيز الصورة.
     const popup=window.open('about:blank','_blank');
     try{
@@ -918,11 +1018,20 @@ ${state.settings.companyName}`;
       }
       const url=`https://wa.me/${number}?text=${encodeURIComponent(receiptText(movementId))}`;
       if(popup) popup.location.href=url; else window.location.href=url;
-      toast('تم تجهيز صورة السند وفتح واتساب المستأجر. أرفق صورة السند التي تم تنزيلها.','info');
+      toast('تم تجهيز صورة السند وفتح واتساب على رقم الحساب. أرفق صورة السند التي تم تنزيلها.','info');
     }catch(e){
       if(popup) popup.close();
       toast('تعذر تجهيز سند القبض.','error');
     }
+  }
+
+  function sendReceiptSms(movementId) {
+    const m=state.movements.find(x=>x.id===movementId); if(!m)return;
+    const tenant=tenantById(m.tenantId),debt=debtById(m.debtId);
+    const phone=String(tenant?.phone||debt?.phone||'').trim().replace(/[^0-9+]/g,'');
+    if(!phone){toast('لا يوجد رقم جوال محفوظ لهذا الحساب.','error');return;}
+    const separator=/iPhone|iPad|iPod/i.test(navigator.userAgent)?'&':'?';
+    window.location.href=`sms:${phone}${separator}body=${encodeURIComponent(receiptText(movementId))}`;
   }
 
   async function shareReceiptJpg(movementId) {
@@ -941,18 +1050,20 @@ ${state.settings.companyName}`;
 
   function openReceiptActions(movementId) {
     const m=state.movements.find(x=>x.id===movementId); if(!m)return;
-    const tenant=tenantById(m.tenantId);
+    const tenant=tenantById(m.tenantId),debt=debtById(m.debtId);
+    const contact=tenant||debt;
     const amounts=CURRENCIES.map(c=>{const u=toUnits(m.amounts?.[c]?.in||0,c);return u>0n?formatMoney(u,c,true):'';}).filter(Boolean).join(' + ');
     const {form}=showModal({
       title:'سند القبض جاهز',
-      subtitle:tenant?`${tenant.name}${tenant.phone?` — ${tenant.phone}`:''}`:'يمكن تنزيل السند أو مشاركته',
+      subtitle:contact?`${contact.name}${contact.phone?` — ${contact.phone}`:''}`:'يمكن تنزيل السند أو مشاركته',
       icon:'i-receipt',hideSubmit:true,
-      body:`<div class="receipt-ready-card"><div><small>رقم السند</small><strong>${escapeHtml(m.receiptNo||m.id)}</strong></div><div><small>المبلغ المقبوض</small><strong class="money-in">${escapeHtml(amounts||'—')}</strong></div><div><small>التاريخ</small><strong>${dateLabel(m.date)}</strong></div></div><div class="form-note receipt-note">زر «واتساب المستأجر» يجهّز صورة JPG للسند ثم يفتح محادثة رقم المستأجر مباشرة مع نص السند. بسبب حماية واتساب والمتصفح، إرفاق الصورة نفسها داخل المحادثة يحتاج منك اختيار ملف السند بعد فتح واتساب. زر «مشاركة الصورة» يرسل ملف JPG عبر قائمة المشاركة في الهاتف.</div>`,
-      extraFooter:`<button class="btn btn-primary" type="button" id="receiptDownloadBtn"><svg class="icon"><use href="#i-download"/></svg>JPG</button><button class="btn btn-primary" type="button" id="receiptShareBtn"><svg class="icon"><use href="#i-share"/></svg>مشاركة الصورة</button><button class="btn btn-whatsapp" type="button" id="receiptWhatsappBtn">واتساب المستأجر</button>`
+      body:`<div class="receipt-ready-card"><div><small>رقم السند</small><strong>${escapeHtml(m.receiptNo||m.id)}</strong></div><div><small>المبلغ المقبوض</small><strong class="money-in">${escapeHtml(amounts||'—')}</strong></div><div><small>التاريخ</small><strong>${dateLabel(m.date)}</strong></div></div><div class="form-note receipt-note">يمكن تنزيل سند القبض JPG أو مشاركته كصورة. زر واتساب يفتح رقم المستأجر/صاحب الدين مع نص السند، وزر رسالة جوال يفتح SMS بالنص نفسه.</div>`,
+      extraFooter:`<button class="btn btn-primary" type="button" id="receiptDownloadBtn"><svg class="icon"><use href="#i-download"/></svg>JPG</button><button class="btn btn-primary" type="button" id="receiptShareBtn"><svg class="icon"><use href="#i-share"/></svg>مشاركة الصورة</button><button class="btn btn-whatsapp" type="button" id="receiptWhatsappBtn">واتساب</button><button class="btn btn-ghost" type="button" id="receiptSmsBtn">رسالة جوال</button>`
     });
     $('#receiptDownloadBtn',form)?.addEventListener('click',()=>exportReceiptJpg(movementId));
     $('#receiptShareBtn',form)?.addEventListener('click',()=>shareReceiptJpg(movementId));
     $('#receiptWhatsappBtn',form)?.addEventListener('click',()=>sendReceiptWhatsApp(movementId));
+    $('#receiptSmsBtn',form)?.addEventListener('click',()=>sendReceiptSms(movementId));
   }
 
   function loadImage(src){return new Promise((res,rej)=>{const img=new Image();img.onload=()=>res(img);img.onerror=rej;img.src=src;});}
@@ -1034,7 +1145,7 @@ ${state.settings.companyName}`;
       ['[data-edit-project]','projects.edit'],['[data-delete-project]','projects.delete'],['[data-edit-building]','buildings.edit'],['[data-delete-building]','buildings.delete'],
       ['[data-edit-tenant]','tenants.edit'],['[data-delete-tenant]','tenants.delete'],['[data-pay-tenant],[data-pay-arrears]','arrears.collect'],
       ['[data-arrears-whatsapp],[data-arrears-sms]','arrears.contact'],['[data-edit-movement]','movements.edit'],['[data-delete-movement]','movements.delete'],['[data-receipt]','movements.receipt'],
-      ['[data-edit-debt]','debts.edit'],['[data-delete-debt]','debts.delete'],['[data-debt-payment]','debts.pay'],['[data-edit-user]','users.edit'],['[data-toggle-user]','users.disable']
+      ['[data-debt-report]','debts.view'],['[data-edit-debt]','debts.edit'],['[data-delete-debt]','debts.delete'],['[data-debt-payment]','debts.pay'],['[data-edit-user]','users.edit'],['[data-toggle-user]','users.disable']
     ];
     $$('.nav-link[data-view]').forEach(el=>{const perm=PERMISSIONS.viewForRoute?.[el.dataset.view];el.hidden=el.dataset.view==='settings'?false:Boolean(perm&&!can(perm));});
     $$('.mobile-bottom-item[data-mobile-view]').forEach(el=>{const perm=PERMISSIONS.viewForRoute?.[el.dataset.mobileView];el.hidden=Boolean(perm&&!can(perm));});
@@ -1118,8 +1229,10 @@ ${state.settings.companyName}`;
       const rc=e.target.closest('[data-receipt]');if(rc)openReceiptActions(rc.dataset.receipt);
       const ed=e.target.closest('[data-edit-debt]');if(ed)openDebtModal(ed.dataset.editDebt);
       const dd=e.target.closest('[data-delete-debt]');if(dd)deleteDebt(dd.dataset.deleteDebt);
+      const dr=e.target.closest('[data-debt-report]');if(dr)openDebtDetailedReport(dr.dataset.debtReport);
       const dp=e.target.closest('[data-debt-payment]');if(dp)openDebtPaymentModal(dp.dataset.debtPayment);
       const dh=e.target.closest('[data-debt-history]');if(dh)openDebtHistoryModal(dh.dataset.debtHistory);
+      const dpr=e.target.closest('[data-debt-payment-receipt]');if(dpr){const pay=state.debtPayments.find(x=>x.id===dpr.dataset.debtPaymentReceipt);if(pay?.movementId)openReceiptActions(pay.movementId);}
       const ddp=e.target.closest('[data-delete-debt-payment]');if(ddp)deleteDebtPayment(ddp.dataset.deleteDebtPayment);
       const eu=e.target.closest('[data-edit-user]');if(eu)openUserModal(eu.dataset.editUser);
       const tu=e.target.closest('[data-toggle-user]');if(tu)toggleCompanyUser(tu.dataset.toggleUser,tu.dataset.userActive==='1');
