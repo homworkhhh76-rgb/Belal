@@ -1,13 +1,13 @@
 /* Shahd Accounting — direct Turso browser client (CashTop-style static mode)
- * Uses the same Turso database configured in the supplied CASH TOP package.
+ * Uses the Belal Turso database configured for this deployment.
  * Static-web mode: works from normal hosting and compatible local HTML preview without a custom API server.
  */
 (() => {
   'use strict';
-  const DATABASE_URL = "libsql://cash-top-homworkhhh76-rgb.aws-eu-west-1.turso.io";
-  const AUTH_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODUwODYwNTIsImlkIjoiMDE5ZjlmNjYtOTQwMS03MmEwLTkyNzItYjVhZjA2ODczZmIyIiwia2lkIjoicVgzS01DZ0pwQnp3eGo1Tzl2SHhaWUJGem9sTWFsa24tTU5JOTRlMTl6YyIsInJpZCI6ImQxZmE2MjhjLThiYTMtNDJhNS04MzhmLTc1MGJhNGQwYWE1YiJ9.Dl9BkY70zPZCzGnf_MHg2A7GtWsnd6BRGQoUyEeEPIz3BWbkDj70xD-B7x5U5VG8aBoiljNtCpg0OHJCjnuoAA";
+  const DATABASE_URL = "libsql://belal-homworkhhh76-rgb.aws-ap-northeast-1.turso.io";
+  const AUTH_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODgyMDEyMzMsImlkIjoiMDFhMDU5MTgtODgwMS03NDAyLWI0Y2UtODIzMmYwY2ViODIzIiwia2lkIjoicVgzS01DZ0pwQnp3eGo1Tzl2SHhaWUJGem9sTWFsa24tTU5JOTRlMTl6YyIsInJpZCI6ImUyYTUxN2RlLWRlMzAtNDEyYy05ZTYwLTY3YWQwODgzODFkYiJ9.azwoAbFpJVHZuFvvZS_hZcRCGtd7aGEYIc1T8S6DyKMCroW3AvKVLoB-tCQElHHKmoLTc7YHmB0P_pa_cJaxDQ";
   const PIPELINE_URL = DATABASE_URL.replace(/^libsql:\/\//i,'https://').replace(/\/+$/,'') + '/v2/pipeline';
-  const SCHEMA_MARK = 'shahd_turso_schema_v14';
+  const SCHEMA_MARK = 'shahd_turso_schema_v14::belal_ap_northeast_1';
   let schemaPromise = null;
 
   const typedArg = value => {

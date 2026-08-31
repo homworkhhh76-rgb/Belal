@@ -198,6 +198,23 @@
     persistChain=persistChain.catch(()=>null).then(async()=>{await putOne('states',{companyId:stateKey(currentSession.companyId),tenantId:currentSession.companyId,state:snap,updatedAt:now()});await diffAndQueue(prev,snap);emitStatus();scheduleSync(WRITE_DEBOUNCE_MS);cleanLocalStorage()}).catch(e=>{lastSyncError=e?.message||String(e);emitStatus();console.error(e)});
     return persistChain;
   }
+
+  async function importBackupState(nextState){
+    if(!currentSession?.companyId)throw new Error('يجب تسجيل الدخول قبل استيراد النسخة الاحتياطية.');
+    const snap=clone(nextState);currentState=snap;lastLocalState=snap;
+    await putOne('states',{companyId:stateKey(currentSession.companyId),tenantId:currentSession.companyId,state:snap,updatedAt:now()});
+    const ops=[];
+    for(const type of STATE_COLLECTIONS){
+      for(const rec of(snap[type]||[])){
+        if(rec?.id)ops.push({entityType:type,entityId:String(rec.id),action:'create',payload:rec,patch:rec,baseRev:await getRecordRev(currentSession.companyId,type,String(rec.id))});
+      }
+    }
+    ops.push({entityType:'settings',entityId:SETTINGS_ENTITY_ID,action:'create',payload:snap.settings||{},patch:snap.settings||{},baseRev:await getRecordRev(currentSession.companyId,'settings',SETTINGS_ENTITY_ID)});
+    await writeQueueOperations(currentSession.companyId,ops,true);
+    cleanLocalStorage();emitStatus({backupImport:true});
+    if(navigator.onLine===false){scheduleSync(250);return{ok:true,offline:true,queued:await queueCount()};}
+    return syncNow({manual:true});
+  }
   function cleanLocalStorage(){try{for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k?.startsWith('shahd_temp_'))localStorage.removeItem(k)}}catch(_){}}
   async function getCursor(companyId){return Number((await getOne('meta',cursorKey(companyId)))?.value||0)}
   async function setCursor(companyId,value){return putOne('meta',{key:cursorKey(companyId),value:Number(value||0),updatedAt:now()})}
@@ -424,5 +441,5 @@
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&currentSession&&navigator.onLine!==false&&now()-lastSyncAt>30000)scheduleSync(300)});
   setInterval(()=>{if(currentSession?.licenseExpiresAt&&now()>=Number(currentSession.licenseExpiresAt))forceLogout('انتهت مدة مفتاح الشركة. يجب تمديد الاشتراك ثم تسجيل الدخول من جديد.')},60000);
 
-  window.ShahdCloud=Object.freeze({start,persistState,syncNow,queueCount,queueItems,hasPermission,getSession:()=>currentSession,getState:()=>clone(currentState),forceLogout,listUsers,saveUser,toggleUser,storageStats});
+  window.ShahdCloud=Object.freeze({start,persistState,importBackupState,syncNow,queueCount,queueItems,hasPermission,getSession:()=>currentSession,getState:()=>clone(currentState),forceLogout,listUsers,saveUser,toggleUser,storageStats});
 })();

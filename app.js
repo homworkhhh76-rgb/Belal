@@ -1085,7 +1085,30 @@ ${state.settings.companyName}`;
   }
   function downloadBlob(blob,name){const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1200);}
   function exportBackup(){const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});downloadBlob(blob,`shahd-backup-${today()}.json`);toast('تم تصدير النسخة الاحتياطية.');}
-  function restoreBackup(file){const r=new FileReader();r.onload=()=>{try{const data=JSON.parse(r.result);if(!data||!Array.isArray(data.buildings)||!Array.isArray(data.tenants)){throw new Error('bad');}state={...cloneDefaults(),...data,projects:Array.isArray(data.projects)?data.projects:[],debts:Array.isArray(data.debts)?data.debts.map(d=>({...d,direction:['receivable','payable'].includes(d.direction)?d.direction:'receivable'})):[],settings:{...defaults.settings,...(data.settings||{})}};saveState();toast('تم استيراد النسخة الاحتياطية بنجاح.');}catch(e){toast('ملف النسخة الاحتياطية غير صالح.','error');}};r.readAsText(file);}
+  function restoreBackup(file){
+    const r=new FileReader();
+    r.onload=async()=>{
+      try{
+        const data=JSON.parse(r.result);
+        if(!data||!Array.isArray(data.buildings)||!Array.isArray(data.tenants))throw new Error('INVALID_BACKUP');
+        state={...cloneDefaults(),...data,projects:Array.isArray(data.projects)?data.projects:[],movements:Array.isArray(data.movements)?data.movements:[],debts:Array.isArray(data.debts)?data.debts.map(d=>({...d,direction:['receivable','payable'].includes(d.direction)?d.direction:'receivable'})):[],debtPayments:Array.isArray(data.debtPayments)?data.debtPayments:[],settings:{...defaults.settings,...(data.settings||{})}};
+        applyTheme();renderAll();
+        const result=window.ShahdCloud?.importBackupState
+          ? await window.ShahdCloud.importBackupState(state)
+          : (await window.ShahdCloud?.persistState?.(state), await window.ShahdCloud?.syncNow?.({manual:true}));
+        if(result?.loggedOut)return;
+        if(result?.offline)toast('تم استيراد النسخة محلياً، وستتم مزامنتها تلقائياً فور عودة الإنترنت.','info');
+        else if(result?.failed)toast(`تم استيراد النسخة ورفعها إلى قاعدة البيانات، مع بقاء ${result.failed} عملية في طابور المزامنة.`,'info');
+        else toast('تم استيراد النسخة الاحتياطية ومزامنتها فوراً مع قاعدة البيانات.');
+      }catch(e){
+        console.error(e);
+        if(String(e?.message||'')==='INVALID_BACKUP')toast('ملف النسخة الاحتياطية غير صالح.','error');
+        else toast(e?.message||'تم الاستيراد محلياً لكن تعذرت المزامنة مع قاعدة البيانات.','error');
+      }
+    };
+    r.onerror=()=>toast('تعذر قراءة ملف النسخة الاحتياطية.','error');
+    r.readAsText(file);
+  }
 
   function loadDemoData() {
     const b1={id:'b_demo_1',name:'عمارة المركز',address:'الفرع الرئيسي',apartments:8,notes:'',createdAt:new Date().toISOString()};
