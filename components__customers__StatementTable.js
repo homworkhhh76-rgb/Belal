@@ -1,0 +1,3 @@
+import React from 'react';
+import {customerStatementModel,statementHeaders} from './utils__customerStatement.js?v=7.9.4.136-localization';
+export function StatementTable({customer,invoices,vouchers}){const model=customerStatementModel(customer,invoices,vouchers);const h=React.createElement;return h('div',{className:'ct-statement-scroll'},h('table',{className:'ct-statement-table'},h('thead',null,h('tr',null,...statementHeaders.map(x=>h('th',{key:x},x)))),h('tbody',null,...model.rows.map((r,i)=>h('tr',{key:i},...r.map((v,j)=>h('td',{key:j,className:j===3?'ct-statement-description':''},typeof v==='number'&&j>=4?v.toFixed(2):v)))))));}
