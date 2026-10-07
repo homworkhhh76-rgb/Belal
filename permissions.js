@@ -11,10 +11,10 @@
       ['buildings.view','عرض العقارات'],['buildings.create','إضافة عمارة'],['buildings.edit','تعديل عمارة'],['buildings.delete','حذف عمارة']
     ]},
     { id:'tenants', label:'المستأجرون', permissions:[
-      ['tenants.view','عرض المستأجرين'],['tenants.create','إضافة مستأجر'],['tenants.edit','تعديل مستأجر'],['tenants.delete','حذف مستأجر']
+      ['tenants.view','عرض المستأجرين'],['tenants.create','إضافة مستأجر'],['tenants.edit','تعديل مستأجر'],['tenants.end','إنهاء عقد وترحيل المتبقي للديون'],['tenants.files','إضافة وعرض عقد الإيجار وصورة الهوية'],['tenants.delete','حذف مستأجر']
     ]},
     { id:'movements', label:'الحركة اليومية', permissions:[
-      ['movements.view','عرض الحركات'],['movements.create','إضافة حركة / دفعة'],['movements.edit','تعديل حركة'],['movements.delete','حذف حركة'],['movements.receipt','إنشاء ومشاركة سند قبض']
+      ['movements.view','عرض الحركات'],['movements.create','إضافة حركة / دفعة'],['movements.edit','تعديل حركة'],['movements.delete','حذف حركة'],['movements.receipt','إنشاء ومشاركة سند قبض / صرف']
     ]},
     { id:'arrears', label:'المتأخرات', permissions:[
       ['arrears.view','عرض المتأخرات'],['arrears.collect','تسجيل دفعة من المتأخرات'],['arrears.contact','إرسال واتساب / SMS للمستأجر']

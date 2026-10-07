@@ -36,6 +36,7 @@
   let usersLoading = false;
   let activeView = 'dashboard';
   let activeDebtTab = 'receivable';
+  let activeTenantTab = 'active';
   let activeProjectId = '';
   let activeProjectTab = 'movements';
   let deferredInstallPrompt = null;
@@ -177,6 +178,15 @@
   function tenantById(id) { return state.tenants.find(x => x.id === id); }
   function projectById(id) { return state.projects.find(x => x.id === id); }
   function debtById(id) { return state.debts.find(x => x.id === id); }
+  function currentExecutor() { const session=window.ShahdCloud?.getSession?.()||{}; return String(session.displayName||session.username||state.settings.defaultExecutor||'').trim(); }
+  function isTenantActive(t) { return (t?.status||'active') === 'active'; }
+  function tenantExitDebt(t) { return t?.exitDebtId ? debtById(t.exitDebtId) : state.debts.find(d=>d.source==='tenant_exit'&&d.tenantId===t?.id); }
+  function tenantArchiveState(t) { if(isTenantActive(t)) return 'active'; const d=tenantExitDebt(t); return d && debtRemainingUnits(d)>0n ? 'former_debt' : 'former_clear'; }
+  function paymentMethodLabel(value){ return value==='bank'?'بنكي':'نقدي'; }
+  function financialMetaFields(existing={}) {
+    const methodOptions=[{value:'cash',label:'نقدي'},{value:'bank',label:'بنكي / محفظة'}];
+    return `${selectField('paymentMethod','طريقة الدفع',methodOptions,existing.paymentMethod||'cash')}${field('referenceNo','رقم المرجع الوارد / الصادر',existing.referenceNo||'')}${field('bankWallet','اسم البنك / المحفظة',existing.bankWallet||'')}`;
+  }
 
   function toast(message, type = 'success', title = '') {
     const root = $('#toastRoot');
@@ -244,6 +254,7 @@
     const viewPermission = PERMISSIONS.viewForRoute?.[view];
     if (view!=='settings' && viewPermission && !can(viewPermission)) { toast('هذه الصفحة غير متاحة لصلاحيات حسابك.','error'); return; }
     activeView = view;
+    document.body.dataset.view = view==='project-details'?'projects':view;
     $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${view}`));
     const navView=view==='project-details'?'projects':view;
     $$('.nav-link').forEach(b => b.classList.toggle('active', b.dataset.view === navView));
@@ -387,18 +398,24 @@
     const monthly = toUnits(tenant.rentAmount || '0', currency);
     if (!tenant.startMonth || monthly <= 0n) return {currency,monthly,months:[],due:0n,paid:0n,charged:0n};
     const startIdx = monthToIndex(tenant.startMonth);
-    const cutoffIdx = monthToIndex(cutoff);
+    let cutoffIdx = monthToIndex(cutoff);
     const duration = Math.max(1, Number(tenant.contractMonths || 12));
-    const endIdx = startIdx + duration - 1;
+    let endIdx = startIdx + duration - 1;
+    if(!isTenantActive(tenant) && tenant.endedMonth){
+      const endedIdx=monthToIndex(tenant.endedMonth);
+      if(endedIdx!==null) endIdx=Math.min(endIdx,endedIdx);
+    }
     const lastIdx = Math.min(cutoffIdx ?? endIdx, endIdx);
-    if (lastIdx < startIdx) return {currency,monthly,months:[],due:0n,paid:0n,charged:0n};
+    if (lastIdx < startIdx) return {currency,monthly,months:[],due:0n,paid:0n,charged:0n,contractEnd:indexToMonth(endIdx)};
     const dueMonths = Array.from({length:lastIdx-startIdx+1},(_,i)=>indexToMonth(startIdx+i));
     const paidMap = Object.fromEntries(dueMonths.map(m=>[m,0n]));
     const rentMovements = state.movements
       .filter(m => m.type==='rent' && m.tenantId===tenant.id)
       .sort((a,b)=>(a.date||'').localeCompare(b.date||'') || (a.createdAt||'').localeCompare(b.createdAt||''));
     rentMovements.forEach(m => {
-      let remaining = toUnits(m.amounts?.[currency]?.in || '0', currency);
+      const actual=toUnits(m.amounts?.[currency]?.in || '0', currency);
+      const discount=toUnits(m.rentDiscount || '0', currency);
+      let remaining = actual + discount;
       const months = Array.isArray(m.rentMonths) && m.rentMonths.length ? m.rentMonths : (m.rentMonth ? [m.rentMonth] : []);
       months.forEach(month => {
         if (remaining <= 0n || paidMap[month] === undefined) return;
@@ -414,22 +431,47 @@
       const due = monthly > paid ? monthly - paid : 0n;
       return {month,charge:monthly,paid,due};
     }).filter(x=>x.due>0n);
-    const due = months.reduce((s,x)=>s+x.due,0n);
-    const paid = dueMonths.reduce((s,m)=>s+(paidMap[m]||0n),0n);
+    const due = months.reduce((sum,x)=>sum+x.due,0n);
+    const paid = dueMonths.reduce((sum,m)=>sum+(paidMap[m]||0n),0n);
     const charged = BigInt(dueMonths.length) * monthly;
     return {currency,monthly,months,due,paid,charged,contractEnd:indexToMonth(endIdx)};
   }
 
+  function debtInstallmentStatus(debt, date=today()){
+    if(!debt || debt.status==='closed' || !debt.installmentEnabled) return null;
+    const c=debt.currency||'ILS', installment=toUnits(debt.installmentAmount||'0',c);
+    if(installment<=0n) return null;
+    const startMonth=debt.installmentStartMonth || String(debt.date||date).slice(0,7);
+    const startIdx=monthToIndex(startMonth), currentIdx=monthToIndex(String(date).slice(0,7));
+    if(startIdx===null||currentIdx===null) return null;
+    const dueDay=Math.min(28,Math.max(1,Number(debt.installmentDueDay||1)));
+    const day=Number(String(date).slice(8,10)||1);
+    let dueCount=currentIdx-startIdx+(day>=dueDay?1:0);
+    dueCount=Math.max(0,dueCount);
+    const total=toUnits(debt.amount,c), paid=debtPaidUnits(debt);
+    const expected=installment*BigInt(dueCount)>total?total:installment*BigInt(dueCount);
+    const overdue=expected>paid?expected-paid:0n;
+    let nextIdx=startIdx+dueCount;
+    if(dueCount===0 && currentIdx>startIdx) nextIdx=currentIdx;
+    const nextMonth=indexToMonth(nextIdx);
+    const nextDate=`${nextMonth}-${String(dueDay).padStart(2,'0')}`;
+    const ms=Math.max(0,new Date(`${nextDate}T00:00:00`).getTime()-new Date(`${date}T00:00:00`).getTime());
+    const daysUntil=Math.round(ms/86400000);
+    return {currency:c,installment,dueDay,startMonth,dueCount,expected,paid,overdue,nextDate,daysUntil,remaining:debtRemainingUnits(debt)};
+  }
+
   function renderDashboard() {
     const cutoff = getDashboardCutoffMonth();
-    const arrearsRows = state.tenants.map(t => ({tenant:t,...calculateTenantArrears(t,cutoff)})).filter(x=>x.due>0n);
+    const activeTenants=state.tenants.filter(isTenantActive);
+    const formerTenants=state.tenants.filter(t=>!isTenantActive(t));
+    const arrearsRows = activeTenants.map(t => ({tenant:t,...calculateTenantArrears(t,cutoff)})).filter(x=>x.due>0n);
     const openReceivable = state.debts.filter(d=>d.status!=='closed' && (d.direction||'receivable')==='receivable');
     const openPayable = state.debts.filter(d=>d.status!=='closed' && d.direction==='payable');
     const openDebts = [...openReceivable,...openPayable];
     const stats = [
       {label:'المشاريع',value:state.projects.length,note:'مشروع مستقل',icon:'i-project'},
       {label:'العقارات',value:state.buildings.length,note:'عمارة مسجلة',icon:'i-building'},
-      {label:'المستأجرون',value:state.tenants.length,note:'عقد إيجار',icon:'i-users'},
+      {label:'المستأجرون الحاليون',value:activeTenants.length,note:`${formerTenants.length} مستأجر سابق محفوظ بالأرشيف`,icon:'i-users'},
       {label:'حالات المتأخرات',value:arrearsRows.length,note:`حتى ${monthLabel(cutoff)}`,icon:'i-clock'},
       {label:'ديون لنا / علينا',value:`${openReceivable.length} / ${openPayable.length}`,note:'لنا / علينا',icon:'i-debt'}
     ];
@@ -447,6 +489,8 @@
     if (arrearsRows.length) alerts.push({title:`${arrearsRows.length} مستأجر لديهم متأخرات`,text:arrearsByCurrency.map(x=>formatMoney(x.total,x.c,true)).join(' • ') || 'راجع شاشة المتأخرات'});
     if (openReceivable.length) alerts.push({title:`${openReceivable.length} دين لنا قيد التحصيل`,text:receivableByCurrency.map(x=>formatMoney(x.total,x.c,true)).join(' • ') || 'راجع شاشة الديون'});
     if (openPayable.length) alerts.push({title:`${openPayable.length} دين علينا يحتاج سداد`,text:payableByCurrency.map(x=>formatMoney(x.total,x.c,true)).join(' • ') || 'راجع شاشة الديون'});
+    const installmentAlerts=state.debts.map(d=>({debt:d,status:debtInstallmentStatus(d)})).filter(x=>x.status&&(x.status.overdue>0n||x.status.daysUntil<=3));
+    if(installmentAlerts.length) alerts.push({title:`${installmentAlerts.length} موعد قسط دين يحتاج متابعة`,text:installmentAlerts.slice(0,3).map(x=>`${x.debt.name}: ${x.status.overdue>0n?'متأخر '+formatMoney(x.status.overdue,x.debt.currency,true):'يستحق '+dateLabel(x.status.nextDate)}`).join(' • ')});
     if (!state.buildings.length) alerts.push({title:'ابدأ بإضافة أول عمارة',text:'بعدها أضف المستأجرين وحدد بداية العقد وقيمة الإيجار.'});
     if (!alerts.length) alerts.push({title:'لا توجد تنبيهات حالياً',text:'الحسابات المفتوحة والمتأخرات تحت السيطرة.'});
     $('#dashboardAlerts').innerHTML = alerts.map(a=>`<div class="alert-item"><div class="alert-dot"></div><div><strong>${escapeHtml(a.title)}</strong><span>${escapeHtml(a.text)}</span></div></div>`).join('');
@@ -460,39 +504,45 @@
     const list = state.buildings.filter(b => !q || `${b.name} ${b.address}`.toLowerCase().includes(q));
     $('#buildingsCards').innerHTML = list.length ? list.map(b => {
       const tenants = state.tenants.filter(t=>t.buildingId===b.id).length;
-      return `<article class="entity-card"><div class="entity-head"><div class="entity-icon"><svg class="icon"><use href="#i-building"/></svg></div><span class="badge badge-blue">${tenants} مستأجر</span></div><h3>${escapeHtml(b.name)}</h3><p>${escapeHtml(b.address || 'بدون عنوان')}</p><div class="entity-meta"><div class="meta-chip"><small>عدد الشقق</small><strong>${Number(b.apartments||0)}</strong></div><div class="meta-chip"><small>الإشغال</small><strong>${tenants} / ${Number(b.apartments||0) || '—'}</strong></div></div><div class="card-actions"><button class="btn btn-ghost btn-sm" data-edit-building="${b.id}"><svg class="icon"><use href="#i-edit"/></svg>تعديل</button><button class="btn btn-danger-soft btn-sm" data-delete-building="${b.id}"><svg class="icon"><use href="#i-trash"/></svg>حذف</button></div></article>`;
+      return `<article class="entity-card"><div class="entity-head"><div class="entity-icon"><svg class="icon"><use href="#i-building"/></svg></div><span class="badge badge-blue">${tenants} مستأجر</span></div><h3>${escapeHtml(b.name)}</h3><p>${escapeHtml(b.address || 'بدون عنوان')}</p><div class="entity-meta"><div class="meta-chip"><small>عدد الشقق</small><strong>${Number(b.apartments||0)}</strong></div><div class="meta-chip"><small>الإشغال</small><strong>${tenants} / ${Number(b.apartments||0) || '—'}</strong></div></div><div class="card-actions"><button class="btn btn-report btn-sm" data-building-statement="${b.id}"><svg class="icon"><use href="#i-chart"/></svg>كشف حساب</button><button class="btn btn-ghost btn-sm" data-edit-building="${b.id}"><svg class="icon"><use href="#i-edit"/></svg>تعديل</button><button class="btn btn-danger-soft btn-sm" data-delete-building="${b.id}"><svg class="icon"><use href="#i-trash"/></svg>حذف</button></div></article>`;
     }).join('') : `<div class="panel empty" style="grid-column:1/-1">لا توجد عقارات مطابقة. استخدم زر «إضافة عمارة» للبدء.</div>`;
   }
 
   function renderTenants() {
     const q = ($('#tenantSearch')?.value || '').trim().toLowerCase();
     const buildingFilter = $('#tenantBuildingFilter')?.value || '';
-    const list = state.tenants.filter(t => {
+    const all=state.tenants.filter(t => {
       const b = buildingById(t.buildingId);
       const matchQ = !q || `${t.name} ${t.phone} ${t.idNumber} ${b?.name||''}`.toLowerCase().includes(q);
-      return matchQ && (!buildingFilter || t.buildingId===buildingFilter);
+      const status=tenantArchiveState(t);
+      const statusMatch=activeTenantTab==='all'||status===activeTenantTab;
+      return matchQ && statusMatch && (!buildingFilter || t.buildingId===buildingFilter);
     });
-    $('#tenantsTable').innerHTML = list.length ? `<table><thead><tr><th>المستأجر</th><th>العقار</th><th>الموقع</th><th>الإيجار الشهري</th><th>بداية العقد</th><th>مدة العقد</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody>${list.map(t=>{
-      const b=buildingById(t.buildingId); const a=calculateTenantArrears(t,getDashboardCutoffMonth());
-      return `<tr><td><strong>${escapeHtml(t.name)}</strong><br><small>${escapeHtml(t.phone||'')}</small></td><td>${escapeHtml(b?.name||'—')}</td><td>${escapeHtml([t.floor,t.direction].filter(Boolean).join(' / ')||'—')}</td><td><strong>${formatMoney(t.rentAmount,t.rentCurrency)}</strong></td><td>${monthLabel(t.startMonth)}</td><td>${Number(t.contractMonths||12)} شهر</td><td>${a.due>0n?`<span class="badge badge-red">متأخر ${a.months.length} شهر</span>`:`<span class="badge badge-green">منتظم</span>`}</td><td><div class="actions"><button class="btn btn-ghost btn-sm btn-icon" title="دفعة" data-pay-tenant="${t.id}"><svg class="icon"><use href="#i-receipt"/></svg></button><button class="btn btn-ghost btn-sm btn-icon" title="تعديل" data-edit-tenant="${t.id}"><svg class="icon"><use href="#i-edit"/></svg></button><button class="btn btn-danger-soft btn-sm btn-icon" title="حذف" data-delete-tenant="${t.id}"><svg class="icon"><use href="#i-trash"/></svg></button></div></td></tr>`;
-    }).join('')}</tbody></table>` : `<div class="empty">لا يوجد مستأجرون مطابقون.</div>`;
+    const counts={active:0,former_debt:0,former_clear:0};state.tenants.forEach(t=>counts[tenantArchiveState(t)]++);
+    $('#tenantSummary').innerHTML=[['الحاليون',counts.active,'money-in'],['سابقون عليهم ديون',counts.former_debt,'money-out'],['قدامى خالص',counts.former_clear,'money-balance']].map(([label,val,cls])=>`<div class="mini-card"><small>${label}</small><strong class="${cls}">${val}</strong></div>`).join('');
+    $$('#tenantTabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.tenantTab===activeTenantTab));
+    $('#tenantsTable').innerHTML = all.length ? `<table><thead><tr><th>المستأجر</th><th>العقار</th><th>الموقع</th><th>الإيجار الشهري</th><th>العقد</th><th>الحالة</th><th>الملفات</th><th>إجراءات</th></tr></thead><tbody>${all.map(t=>{
+      const b=buildingById(t.buildingId), status=tenantArchiveState(t), a=calculateTenantArrears(t,getDashboardCutoffMonth()), exitDebt=tenantExitDebt(t);
+      const statusHtml=status==='active'?(a.due>0n?`<span class="badge badge-red">متأخر ${a.months.length} شهر</span>`:`<span class="badge badge-green">حالي - منتظم</span>`):status==='former_debt'?`<span class="badge badge-red">سابق - عليه ${formatMoney(debtRemainingUnits(exitDebt),exitDebt.currency,true)}</span>`:`<span class="badge badge-gray">مستأجر قديم - خالص</span>`;
+      const docs=[t.contractAttachment?`<span class="file-status ${t.contractAttachment.pending?'pending':''}">عقد${t.contractAttachment.pending?' • بانتظار الرفع':''}</span>`:'',t.identityAttachment?`<span class="file-status ${t.identityAttachment.pending?'pending':''}">هوية${t.identityAttachment.pending?' • بانتظار الرفع':''}</span>`:''].filter(Boolean).join('<br>')||'<small>لا توجد ملفات</small>';
+      return `<tr><td><strong>${escapeHtml(t.name)}</strong><br><small>${escapeHtml(t.phone||'')}</small></td><td>${escapeHtml(b?.name||'—')}</td><td>${escapeHtml([t.floor,t.direction].filter(Boolean).join(' / ')||'—')}</td><td><strong>${formatMoney(t.rentAmount,t.rentCurrency)}</strong></td><td>${monthLabel(t.startMonth)}<br><small>${Number(t.contractMonths||12)} شهر${t.endedDate?` • انتهى ${dateLabel(t.endedDate)}`:''}</small></td><td>${statusHtml}</td><td>${docs}</td><td><div class="actions tenant-actions">${status==='active'?`<button class="btn btn-primary btn-sm" data-pay-tenant="${t.id}">دفعة</button><button class="btn btn-danger-soft btn-sm" data-end-tenant="${t.id}">إنهاء العقد</button>`:''}<button class="btn btn-report btn-sm" data-tenant-statement="${t.id}"><svg class="icon"><use href="#i-chart"/></svg>كشف حساب</button><button class="btn btn-ghost btn-sm" data-tenant-files="${t.id}"><svg class="icon"><use href="#i-file"/></svg>العقد والهوية</button><button class="btn btn-ghost btn-sm btn-icon" title="تعديل" data-edit-tenant="${t.id}"><svg class="icon"><use href="#i-edit"/></svg></button></div></td></tr>`;
+    }).join('')}</tbody></table>` : `<div class="empty">لا يوجد مستأجرون ضمن هذا التصنيف.</div>`;
   }
 
   function movementsTableMarkup(list, compact=false) {
-    return `<table><thead><tr><th>التاريخ</th><th>النوع</th><th>البيان</th><th>المكان / المستأجر</th>${compact?'<th>القيمة</th>':CURRENCIES.map(c=>`<th>${CURRENCY_META[c].label} وارد</th><th>${CURRENCY_META[c].label} مصروف</th>`).join('')}<th>إجراءات</th></tr></thead><tbody>${list.map(m=>{
-      const tenant=tenantById(m.tenantId), building=buildingById(m.buildingId);
-      const project=projectById(m.projectId);
-      const placeBase = m.type==='rent' ? (tenant?.name||'مستأجر محذوف') : (building?.name||m.account||'مركزي');
+    return `<table><thead><tr><th>التاريخ</th><th>النوع</th><th>البيان</th><th>المكان / المستأجر</th>${compact?'<th>القيمة</th>':CURRENCIES.map(c=>`<th>${CURRENCY_META[c].label} وارد</th><th>${CURRENCY_META[c].label} مصروف</th>`).join('')}<th>الدفع / المرجع</th><th>المنفذ</th><th>إجراءات</th></tr></thead><tbody>${list.map(m=>{
+      const tenant=tenantById(m.tenantId), building=buildingById(m.buildingId), project=projectById(m.projectId);
+      const placeBase = m.type==='rent' ? (tenant?.name||m.account||'مستأجر محذوف') : (building?.name||m.account||'مركزي');
       const place = project ? `${placeBase} — مشروع: ${project.name}` : placeBase;
       let valueCell='';
       if (compact) {
         const vals=[]; CURRENCIES.forEach(c=>{ const i=toUnits(m.amounts?.[c]?.in||0,c),o=toUnits(m.amounts?.[c]?.out||0,c); if(i) vals.push(`<span class="money-in">+${formatMoney(i,c,true)}</span>`); if(o) vals.push(`<span class="money-out">-${formatMoney(o,c,true)}</span>`);});
         valueCell=`<td>${vals.join('<br>')||'—'}</td>`;
-      } else {
-        valueCell=CURRENCIES.map(c=>`<td class="money-in">${toUnits(m.amounts?.[c]?.in||0,c)>0n?formatMoney(m.amounts[c].in,c):'—'}</td><td class="money-out">${toUnits(m.amounts?.[c]?.out||0,c)>0n?formatMoney(m.amounts[c].out,c):'—'}</td>`).join('');
-      }
-      const hasIncoming=CURRENCIES.some(c=>toUnits(m.amounts?.[c]?.in||0,c)>0n);
-      return `<tr><td>${dateLabel(m.date)}</td><td>${m.type==='rent'?'<span class="badge badge-green">دفعة مستأجر</span>':'<span class="badge badge-blue">حركة عامة</span>'}</td><td><strong>${escapeHtml(m.detail||'—')}</strong>${m.rentMonths?.length?`<br><small>${m.rentMonths.map(monthLabel).join('، ')}</small>`:''}</td><td>${escapeHtml(place)}</td>${valueCell}<td><div class="actions">${hasIncoming?`<button class="btn btn-ghost btn-sm receipt-action-btn" title="سند قبض" data-receipt="${m.id}"><svg class="icon"><use href="#i-receipt"/></svg><span>سند قبض</span></button>`:''}<button class="btn btn-ghost btn-sm btn-icon" title="تعديل" data-edit-movement="${m.id}"><svg class="icon"><use href="#i-edit"/></svg></button><button class="btn btn-danger-soft btn-sm btn-icon" title="حذف" data-delete-movement="${m.id}"><svg class="icon"><use href="#i-trash"/></svg></button></div></td></tr>`;
+      } else valueCell=CURRENCIES.map(c=>`<td class="money-in">${toUnits(m.amounts?.[c]?.in||0,c)>0n?formatMoney(m.amounts[c].in,c):'—'}</td><td class="money-out">${toUnits(m.amounts?.[c]?.out||0,c)>0n?formatMoney(m.amounts[c].out,c):'—'}</td>`).join('');
+      const hasIncoming=CURRENCIES.some(c=>toUnits(m.amounts?.[c]?.in||0,c)>0n),hasOutgoing=CURRENCIES.some(c=>toUnits(m.amounts?.[c]?.out||0,c)>0n);
+      const typeBadge=m.type==='rent'?'<span class="badge badge-green">دفعة مستأجر</span>':'<span class="badge badge-blue">حركة عامة</span>';
+      const paymentMeta=`${paymentMethodLabel(m.paymentMethod)}${m.bankWallet?` • ${escapeHtml(m.bankWallet)}`:''}${m.referenceNo?`<br><small>مرجع: ${escapeHtml(m.referenceNo)}</small>`:''}`;
+      return `<tr><td>${dateLabel(m.date)}</td><td>${typeBadge}</td><td><strong>${escapeHtml(m.detail||'—')}</strong>${m.rentMonths?.length?`<br><small>${m.rentMonths.map(monthLabel).join('، ')}</small>`:''}${toUnits(m.rentDiscount||0,tenant?.rentCurrency||'ILS')>0n?`<br><small>خصم: ${formatMoney(m.rentDiscount,tenant?.rentCurrency||'ILS')}</small>`:''}</td><td>${escapeHtml(place)}</td>${valueCell}<td>${paymentMeta}</td><td>${escapeHtml(m.executor||'—')}</td><td><div class="actions">${hasIncoming?`<button class="btn btn-ghost btn-sm receipt-action-btn" title="سند قبض" data-receipt="${m.id}"><svg class="icon"><use href="#i-receipt"/></svg><span>سند قبض</span></button>`:''}${hasOutgoing?`<button class="btn btn-danger-soft btn-sm receipt-action-btn" title="سند صرف" data-payment-voucher="${m.id}"><svg class="icon"><use href="#i-receipt"/></svg><span>سند صرف</span></button>`:''}<button class="btn btn-ghost btn-sm btn-icon" title="تعديل" data-edit-movement="${m.id}"><svg class="icon"><use href="#i-edit"/></svg></button><button class="btn btn-danger-soft btn-sm btn-icon" title="حذف" data-delete-movement="${m.id}"><svg class="icon"><use href="#i-trash"/></svg></button></div></td></tr>`;
     }).join('')}</tbody></table>`;
   }
 
@@ -510,7 +560,7 @@
     const cutoff=$('#arrearsCutoff')?.value||currentMonth();
     if ($('#arrearsCutoff') && !$('#arrearsCutoff').value) $('#arrearsCutoff').value=cutoff;
     const buildingFilter=$('#arrearsBuildingFilter')?.value||'';
-    const rows=state.tenants.filter(t=>!buildingFilter||t.buildingId===buildingFilter).map(t=>({tenant:t,...calculateTenantArrears(t,cutoff)})).filter(x=>x.due>0n);
+    const rows=state.tenants.filter(t=>isTenantActive(t)&&(!buildingFilter||t.buildingId===buildingFilter)).map(t=>({tenant:t,...calculateTenantArrears(t,cutoff)})).filter(x=>x.due>0n);
     $('#arrearsSummary').innerHTML=CURRENCIES.map(c=>{const same=rows.filter(r=>r.currency===c);const total=same.reduce((s,r)=>s+r.due,0n);return `<div class="mini-card"><small>${CURRENCY_META[c].label} متأخر</small><strong>${formatMoney(total,c,true)}</strong><div class="stat-note">${same.length} مستأجر</div></div>`}).join('');
     $('#arrearsTable').innerHTML=rows.length?`<table><thead><tr><th>المستأجر</th><th>العقار</th><th>قيمة الإيجار</th><th>بداية العقد</th><th>نهاية العقد</th><th>الأشهر المطلوبة</th><th>عدد الأشهر</th><th>المستحق</th><th>إجراءات التواصل</th></tr></thead><tbody>${rows.map(r=>{const t=r.tenant,b=buildingById(t.buildingId),hasPhone=!!String(t.phone||'').trim();return `<tr><td><strong>${escapeHtml(t.name)}</strong><br><small>${escapeHtml(t.phone||'بدون رقم')}</small></td><td>${escapeHtml(b?.name||'—')}</td><td>${formatMoney(t.rentAmount,t.rentCurrency)}</td><td>${monthLabel(t.startMonth)}</td><td>${monthLabel(r.contractEnd)}</td><td><div class="month-chips">${r.months.map(x=>`<span class="month-chip">${monthLabel(x.month)} — ${formatMoney(x.due,r.currency,true)}</span>`).join('')}</div></td><td><span class="badge badge-red">${r.months.length} شهر</span></td><td><strong class="money-out">${formatMoney(r.due,r.currency,true)}</strong></td><td><div class="actions arrears-contact-actions"><button class="btn btn-primary btn-sm" data-pay-arrears="${t.id}" data-first-month="${r.months[0]?.month||''}">تسجيل دفعة</button><button class="btn btn-whatsapp btn-sm" data-arrears-whatsapp="${t.id}" ${hasPhone?'':'disabled'}>واتساب</button><button class="btn btn-ghost btn-sm" data-arrears-sms="${t.id}" ${hasPhone?'':'disabled'}>رسالة جوال</button></div></td></tr>`}).join('')}</tbody></table>`:`<div class="empty">لا توجد متأخرات حتى ${monthLabel(cutoff)}.</div>`;
   }
@@ -556,7 +606,7 @@
     if(!requirePermission('reports.export'))return;
     const cutoff=$('#arrearsCutoff')?.value||currentMonth();
     const buildingFilter=$('#arrearsBuildingFilter')?.value||'';
-    const rows=state.tenants.filter(t=>!buildingFilter||t.buildingId===buildingFilter).map(t=>({tenant:t,...calculateTenantArrears(t,cutoff)})).filter(x=>x.due>0n);
+    const rows=state.tenants.filter(t=>isTenantActive(t)&&(!buildingFilter||t.buildingId===buildingFilter)).map(t=>({tenant:t,...calculateTenantArrears(t,cutoff)})).filter(x=>x.due>0n);
     if(!rows.length){toast('لا توجد متأخرات ضمن الفلتر الحالي لتصديرها.','info');return;}
     const button=$('#exportArrearsPdfBtn');if(button)button.disabled=true;
     try{
@@ -655,30 +705,18 @@
   }
   function renderDebts() {
     const isClosed = activeDebtTab === 'closed';
-    const list = state.debts.filter(d => {
-      if (isClosed) return d.status === 'closed';
-      return d.status !== 'closed' && (d.direction || 'receivable') === activeDebtTab;
-    }).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+    const list = state.debts.filter(d => isClosed ? d.status === 'closed' : d.status !== 'closed' && (d.direction || 'receivable') === activeDebtTab).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
     $$('#debtTabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.debtTab===activeDebtTab));
-
     const summaryBase = isClosed ? state.debts.filter(d=>d.status==='closed') : list;
-    $('#debtSummary').innerHTML=CURRENCIES.map(c=>{
-      const same=summaryBase.filter(d=>d.currency===c);
-      const total=isClosed
-        ? same.reduce((s,d)=>s+toUnits(d.amount,d.currency),0n)
-        : same.reduce((s,d)=>s+debtRemainingUnits(d),0n);
-      const label=isClosed ? `${CURRENCY_META[c].label} تم إنهاؤه` : `${CURRENCY_META[c].label} متبقي`;
-      const note=isClosed ? `${same.length} حساب مكتمل` : `${same.length} دين ${activeDebtTab==='receivable'?'لنا':'علينا'}`;
-      return `<div class="mini-card"><small>${label}</small><strong>${formatMoney(total,c,true)}</strong><div class="stat-note">${note}</div></div>`;
-    }).join('');
-
-    const emptyText = isClosed ? 'لا توجد ديون تم سدادها وإنهاؤها حتى الآن.' : activeDebtTab==='receivable' ? 'لا توجد ديون لنا مفتوحة.' : 'لا توجد ديون علينا مفتوحة.';
-    $('#debtsTable').innerHTML=list.length?`<table><thead><tr><th>النوع</th><th>المشروع</th><th>الاسم</th><th>الجوال / الهوية</th><th>المبلغ الأصلي</th><th>${isClosed?'تم سداده/تحصيله':'المدفوع/المحصّل'}</th><th>المتبقي</th><th>${isClosed?'تاريخ الإنهاء':'تاريخ الدين'}</th><th>ملاحظات</th><th>إجراءات</th></tr></thead><tbody>${list.map(d=>{
-      const direction=d.direction||'receivable', paid=debtPaidUnits(d), rem=debtRemainingUnits(d);
+    $('#debtSummary').innerHTML=CURRENCIES.map(c=>{const same=summaryBase.filter(d=>d.currency===c);const total=isClosed?same.reduce((x,d)=>x+toUnits(d.amount,d.currency),0n):same.reduce((x,d)=>x+debtRemainingUnits(d),0n);return `<div class="mini-card"><small>${CURRENCY_META[c].label} ${isClosed?'تم إنهاؤه':'متبقي'}</small><strong>${formatMoney(total,c,true)}</strong><div class="stat-note">${same.length} ${isClosed?'حساب مكتمل':`دين ${activeDebtTab==='receivable'?'لنا':'علينا'}`}</div></div>`}).join('');
+    const emptyText=isClosed?'لا توجد ديون تم سدادها وإنهاؤها حتى الآن.':activeDebtTab==='receivable'?'لا توجد ديون لنا مفتوحة.':'لا توجد ديون علينا مفتوحة.';
+    $('#debtsTable').innerHTML=list.length?`<table><thead><tr><th>النوع</th><th>المشروع</th><th>الاسم</th><th>الجوال / الهوية</th><th>المبلغ الأصلي</th><th>${isClosed?'تم سداده/تحصيله':'المدفوع/المحصّل'}</th><th>المتبقي</th><th>${isClosed?'تاريخ الإنهاء':'تاريخ الدين'}</th><th>التقسيط / المصدر</th><th>ملاحظات</th><th>إجراءات</th></tr></thead><tbody>${list.map(d=>{
+      const direction=d.direction||'receivable',paid=debtPaidUnits(d),rem=debtRemainingUnits(d),project=projectById(d.projectId),inst=debtInstallmentStatus(d);
       const directionBadge=direction==='receivable'?'<span class="badge badge-green">دين لنا</span>':'<span class="badge badge-red">دين علينا</span>';
-      const actionLabel=direction==='receivable'?'تحصيل':'سداد';
-      const project=projectById(d.projectId);
-      return `<tr><td>${directionBadge}</td><td>${project?`<span class="badge badge-blue">${escapeHtml(project.name)}</span>`:'—'}</td><td><strong>${escapeHtml(d.name)}</strong></td><td>${escapeHtml(d.phone||'—')}<br><small>${escapeHtml(d.idNumber||'')}</small></td><td>${formatMoney(d.amount,d.currency)}</td><td class="${direction==='receivable'?'money-in':'money-out'}">${formatMoney(paid,d.currency,true)}</td><td class="${rem>0n?'money-out':'money-in'}">${formatMoney(rem,d.currency,true)}</td><td>${dateLabel(d.status==='closed'?d.completedDate:d.date)}</td><td>${escapeHtml(d.notes||'—')}</td><td><div class="actions debt-row-actions"><button class="btn btn-report btn-sm" data-debt-report="${d.id}"><svg class="icon"><use href="#i-chart"/></svg><span>تقرير تفصيلي</span></button>${d.status!=='closed'?`<button class="btn btn-primary btn-sm" data-debt-payment="${d.id}">${actionLabel}</button>`:''}${paid>0n?`<button class="btn btn-ghost btn-sm" data-debt-history="${d.id}">السجل</button>`:''}<button class="btn btn-ghost btn-sm btn-icon" data-edit-debt="${d.id}" title="تعديل"><svg class="icon"><use href="#i-edit"/></svg></button><button class="btn btn-danger-soft btn-sm btn-icon" data-delete-debt="${d.id}" title="حذف"><svg class="icon"><use href="#i-trash"/></svg></button></div></td></tr>`;
+      let installment='—';
+      if(d.source==='tenant_exit')installment='<span class="badge badge-blue">مرحل من مستأجر سابق</span>';
+      if(d.installmentEnabled){const status=inst?.overdue>0n?`<span class="badge badge-red">متأخر ${formatMoney(inst.overdue,inst.currency,true)}</span>`:`<span class="badge badge-green">موعد ${inst?.nextDate?dateLabel(inst.nextDate):'—'}</span>`;installment=`<div class="installment-cell"><strong>${formatMoney(d.installmentAmount,d.currency)} شهرياً</strong><small>يوم ${Number(d.installmentDueDay||1)} من كل شهر</small>${status}</div>`+(d.source==='tenant_exit'?'<br><span class="badge badge-blue">مستأجر سابق</span>':'');}
+      return `<tr><td>${directionBadge}</td><td>${project?`<span class="badge badge-blue">${escapeHtml(project.name)}</span>`:'—'}</td><td><strong>${escapeHtml(d.name)}</strong></td><td>${escapeHtml(d.phone||'—')}<br><small>${escapeHtml(d.idNumber||'')}</small></td><td>${formatMoney(d.amount,d.currency)}</td><td class="${direction==='receivable'?'money-in':'money-out'}">${formatMoney(paid,d.currency,true)}</td><td class="${rem>0n?'money-out':'money-in'}">${formatMoney(rem,d.currency,true)}</td><td>${dateLabel(d.status==='closed'?d.completedDate:d.date)}</td><td>${installment}</td><td>${escapeHtml(d.notes||'—')}</td><td><div class="actions debt-row-actions"><button class="btn btn-report btn-sm" data-debt-report="${d.id}"><svg class="icon"><use href="#i-chart"/></svg><span>تقرير تفصيلي</span></button>${d.status!=='closed'?`<button class="btn btn-primary btn-sm" data-debt-payment="${d.id}">${direction==='receivable'?'تحصيل':'سداد'}</button>`:''}${paid>0n?`<button class="btn btn-ghost btn-sm" data-debt-history="${d.id}">السجل</button>`:''}<button class="btn btn-ghost btn-sm btn-icon" data-edit-debt="${d.id}" title="تعديل"><svg class="icon"><use href="#i-edit"/></svg></button><button class="btn btn-danger-soft btn-sm btn-icon" data-delete-debt="${d.id}" title="حذف"><svg class="icon"><use href="#i-trash"/></svg></button></div></td></tr>`;
     }).join('')}</tbody></table>`:`<div class="empty">${emptyText}</div>`;
   }
 
@@ -689,7 +727,7 @@
   function renderReports() {
     const list=reportMovements();
     const cutoff=$('#arrearsCutoff')?.value||currentMonth();
-    const arrears=state.tenants.map(t=>calculateTenantArrears(t,cutoff));
+    const arrears=state.tenants.filter(isTenantActive).map(t=>calculateTenantArrears(t,cutoff));
     const openDebts=state.debts.filter(d=>d.status!=='closed');
     const receivableDebts=openDebts.filter(d=>(d.direction||'receivable')==='receivable');
     const payableDebts=openDebts.filter(d=>d.direction==='payable');
@@ -740,6 +778,86 @@
     }});
   }
 
+  function openTenantFilesModal(tenantId){
+    const t=tenantById(tenantId);if(!t)return;
+    const attachmentRow=(label,meta,kind)=>`<div class="attachment-row"><div><small>${label}</small><strong>${meta?.name?escapeHtml(meta.name):'غير مضاف'}</strong>${meta?.pending?'<span class="badge badge-amber">بانتظار الإنترنت</span>':meta?.telegramFileId?'<span class="badge badge-green">محفوظ على Telegram</span>':''}</div>${meta?`<button class="btn btn-ghost btn-sm" type="button" data-open-tenant-attachment="${t.id}" data-attachment-kind="${kind}">عرض</button>`:''}</div>`;
+    const body=`<div class="attachment-list">${attachmentRow('عقد الإيجار',t.contractAttachment,'contract')}${attachmentRow('صورة الهوية',t.identityAttachment,'identity')}</div><div class="form-grid tenant-files-form">${fullField('contractFile','إضافة / استبدال عقد الإيجار','','file','accept="image/*,.pdf,application/pdf"')}${fullField('identityFile','إضافة / استبدال صورة الهوية','','file','accept="image/*"')}</div><div class="form-note">الملفات نفسها لا تُحفظ في Turso. عند توفر الإنترنت تُرفع إلى نفس بوت الصور المستخدم في كاش توب، ويُحفظ في بيانات شهد معرف Telegram فقط. بدون إنترنت تُحفظ مؤقتاً داخل IndexedDB ثم تُرفع تلقائياً.</div>`;
+    const {form,close}=showModal({title:'عقد الإيجار وصورة الهوية',subtitle:t.name,icon:'i-file',body,size:'lg',submitText:'حفظ الملفات',onSubmit:(fd,formEl)=>{(async()=>{
+      const contract=formEl.elements.contractFile?.files?.[0],identity=formEl.elements.identityFile?.files?.[0];
+      if(!contract&&!identity){toast('اختر عقد الإيجار أو صورة الهوية أولاً.','error');return;}
+      const submit=formEl.querySelector('button[type="submit"]');if(submit)submit.disabled=true;
+      try{
+        if(contract)t.contractAttachment=await window.ShahdMedia.saveFile('tenant',t.id,'contract',contract,t.contractAttachment);
+        if(identity)t.identityAttachment=await window.ShahdMedia.saveFile('tenant',t.id,'identity',identity,t.identityAttachment);
+        t.updatedAt=new Date().toISOString();saveState();close();toast((t.contractAttachment?.pending||t.identityAttachment?.pending)?'تم حفظ الملفات محلياً وستُرفع إلى Telegram تلقائياً عند عودة الإنترنت.':'تم حفظ الملفات على Telegram وربطها بالمستأجر.');
+      }catch(err){toast(err?.message||'تعذر حفظ الملف.','error');if(submit)submit.disabled=false;}
+    })();return false;}});
+  }
+
+  function endTenantContract(tenantId){
+    const t=tenantById(tenantId);if(!t||!isTenantActive(t))return;
+    const defaultMonth=currentMonth(),preview=calculateTenantArrears(t,defaultMonth);
+    const body=`<div class="tenant-exit-card"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(buildingById(t.buildingId)?.name||'')}</span><p>المتبقي المحسوب حتى ${monthLabel(defaultMonth)}: <b class="money-out">${formatMoney(preview.due,preview.currency,true)}</b></p></div><div class="form-grid">${field('endedDate','تاريخ الخروج',today(),'date','required')}${field('endedMonth','احتساب الإيجار حتى شهر',defaultMonth,'month','required')}${textareaField('exitNotes','ملاحظات إنهاء العقد','')}</div><div class="form-note">إذا بقي مبلغ على المستأجر سيُنشأ تلقائياً في «ديون لنا» ويظل مرتبطاً بالمستأجر والعقار. إذا كان الرصيد صفراً سينتقل إلى «المستأجرين القدامى - خالص».</div>`;
+    showModal({title:'إنهاء عقد المستأجر',subtitle:'أرشفة العقد مع ترحيل المتبقي للديون',icon:'i-check',body,submitText:'إنهاء العقد',onSubmit:(fd)=>{
+      const endedDate=fd.get('endedDate')||today(),endedMonth=fd.get('endedMonth')||String(endedDate).slice(0,7),arrears=calculateTenantArrears(t,endedMonth);
+      t.status='former';t.endedDate=endedDate;t.endedMonth=endedMonth;t.exitNotes=String(fd.get('exitNotes')||'').trim();t.updatedAt=new Date().toISOString();
+      if(arrears.due>0n){
+        let d=tenantExitDebt(t);
+        const debtData={direction:'receivable',projectId:'',tenantId:t.id,buildingId:t.buildingId,source:'tenant_exit',name:t.name,phone:t.phone||'',idNumber:t.idNumber||'',date:endedDate,amount:unitsToDecimal(arrears.due,arrears.currency,false),currency:arrears.currency,notes:`متبقي إيجار عند انتهاء العقد${t.exitNotes?` — ${t.exitNotes}`:''}`,status:'open',completedDate:'',installmentEnabled:false,createdAt:d?.createdAt||new Date().toISOString()};
+        if(d)Object.assign(d,debtData);else{d={id:uid('d'),...debtData};state.debts.push(d);}t.exitDebtId=d.id;activeTenantTab='former_debt';
+        saveState();toast(`تم إنهاء العقد وترحيل ${formatMoney(arrears.due,arrears.currency,true)} إلى «ديون لنا».`);
+      }else{t.exitDebtId='';activeTenantTab='former_clear';saveState();toast('تم إنهاء العقد ونقل المستأجر إلى «المستأجرين القدامى - خالص».');}
+      return true;
+    }});
+  }
+
+  function entityStatementMovements(kind,id,from='',to=''){
+    return state.movements.filter(m=>{
+      const d=m.debtId?debtById(m.debtId):null;
+      const linked=kind==='tenant'?(m.tenantId===id||d?.tenantId===id):(m.buildingId===id||d?.buildingId===id);
+      return linked&&(!from||m.date>=from)&&(!to||m.date<=to);
+    }).sort((a,b)=>(a.date||'').localeCompare(b.date||'')||(a.createdAt||'').localeCompare(b.createdAt||''));
+  }
+
+  function statementMarkup(kind,id,from='',to=''){
+    const list=entityStatementMovements(kind,id,from,to);
+    const totals=CURRENCIES.map(c=>({c,in:movementTotal(list,c,'in'),out:movementTotal(list,c,'out')}));
+    const cards=totals.map(x=>`<div class="mini-card"><small>${CURRENCY_META[x.c].label}</small><strong class="money-balance">${formatMoney(x.in-x.out,x.c,true)}</strong><div class="statement-mini"><span class="money-in">وارد ${formatMoney(x.in,x.c,true)}</span><span class="money-out">مصروف ${formatMoney(x.out,x.c,true)}</span></div></div>`).join('');
+    const rows=list.map(m=>{const ins=CURRENCIES.map(c=>toUnits(m.amounts?.[c]?.in||0,c)>0n?formatMoney(m.amounts[c].in,c):'').filter(Boolean).join(' + ')||'—',outs=CURRENCIES.map(c=>toUnits(m.amounts?.[c]?.out||0,c)>0n?formatMoney(m.amounts[c].out,c):'').filter(Boolean).join(' + ')||'—';return `<tr><td>${dateLabel(m.date)}</td><td>${m.type==='rent'?'إيجار':'حركة مالية'}</td><td>${escapeHtml(m.detail||'—')}</td><td class="money-in">${ins}</td><td class="money-out">${outs}</td><td>${paymentMethodLabel(m.paymentMethod)}${m.bankWallet?`<br><small>${escapeHtml(m.bankWallet)}</small>`:''}</td><td>${escapeHtml(m.referenceNo||'—')}</td><td>${escapeHtml(m.executor||'—')}</td></tr>`}).join('');
+    return `<div class="mini-stats statement-totals">${cards}</div><div class="table-wrap"><table style="min-width:980px"><thead><tr><th>التاريخ</th><th>النوع</th><th>التفاصيل</th><th>الوارد</th><th>المصروف</th><th>طريقة الدفع</th><th>المرجع</th><th>المنفذ</th></tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">لا توجد حركات ضمن الفترة المحددة.</td></tr>'}</tbody></table></div>`;
+  }
+
+  function openEntityStatement(kind,id){
+    const entity=kind==='tenant'?tenantById(id):buildingById(id);if(!entity)return;
+    const firstDate=entityStatementMovements(kind,id).map(m=>m.date).filter(Boolean).sort()[0]||`${new Date().getFullYear()}-01-01`;
+    const body=`<div class="statement-filter form-grid">${field('statementFrom','من تاريخ',firstDate,'date')}${field('statementTo','إلى تاريخ',today(),'date')}</div><div id="entityStatementContent"></div>`;
+    const {form}=showModal({title:`كشف حساب ${kind==='tenant'?'المستأجر':'العقار'}`,subtitle:entity.name,icon:'i-chart',body,size:'lg',hideSubmit:true,extraFooter:'<button class="btn btn-primary" type="button" id="statementPdfBtn"><svg class="icon"><use href="#i-download"/></svg>PDF بالشعار</button>'});
+    const from=form.elements.statementFrom,to=form.elements.statementTo,render=()=>{$('#entityStatementContent',form).innerHTML=statementMarkup(kind,id,from.value,to.value)};from.addEventListener('change',render);to.addEventListener('change',render);render();
+    $('#statementPdfBtn',form)?.addEventListener('click',()=>exportEntityStatementPdf(kind,id,from.value,to.value));
+  }
+
+  async function exportEntityStatementPdf(kind,id,from='',to=''){
+    if(!requirePermission('reports.export'))return;
+    const entity=kind==='tenant'?tenantById(id):buildingById(id);if(!entity)return;
+    const list=entityStatementMovements(kind,id,from,to);try{await document.fonts?.ready}catch(_){}
+    try{
+      const W=1240,H=1754,M=62,brand='#0b4d8f',text='#172033',muted='#6b778c',line='#dfe6ef',soft='#f4f7fb',green='#0f9d71',danger='#d9394b';let logo=null;try{logo=await loadImage('shahd-logo.jpg')}catch(_){}
+      const perPage=13,pages=Math.max(1,Math.ceil(list.length/perPage)),blobs=[];
+      const totals=Object.fromEntries(CURRENCIES.map(c=>[c,{in:movementTotal(list,c,'in'),out:movementTotal(list,c,'out')}]))
+      for(let pi=0;pi<pages;pi++){
+        const canvas=document.createElement('canvas');canvas.width=W;canvas.height=H;const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);ctx.direction='rtl';ctx.textAlign='right';ctx.fillStyle=brand;ctx.fillRect(0,0,W,20);
+        if(logo){const maxW=300,maxH=125,r=Math.min(maxW/logo.width,maxH/logo.height);ctx.drawImage(logo,W-M-logo.width*r,44,logo.width*r,logo.height*r)}
+        ctx.fillStyle=text;ctx.font='800 40px Cairo, Arial';ctx.fillText(`كشف حساب ${kind==='tenant'?'مستأجر':'عقار'}`,W-M,220);ctx.fillStyle=muted;ctx.font='600 23px Cairo, Arial';ctx.fillText(entity.name,W-M,260);ctx.font='500 18px Cairo, Arial';ctx.fillText(`الفترة: ${from?dateLabel(from):'البداية'} إلى ${to?dateLabel(to):'اليوم'}`,W-M,294);
+        let y=335;CURRENCIES.forEach((c,i)=>{const x=M+(i%2)*540,yy=y+Math.floor(i/2)*78;ctx.fillStyle=soft;roundRect(ctx,x,yy,520,62,12,true,false);ctx.fillStyle=muted;ctx.font='600 16px Cairo, Arial';ctx.textAlign='left';ctx.fillText(CURRENCY_META[c].label,x+18,yy+25);ctx.fillStyle=green;ctx.fillText(`وارد ${formatMoney(totals[c].in,c,true)}`,x+170,yy+25);ctx.fillStyle=danger;ctx.fillText(`مصروف ${formatMoney(totals[c].out,c,true)}`,x+340,yy+25);ctx.textAlign='right'});y+=175;
+        ctx.fillStyle=brand;roundRect(ctx,M,y,W-2*M,54,10,true,false);ctx.fillStyle='#fff';ctx.font='700 16px Cairo, Arial';const cols=[['التاريخ',W-M-20],['التفاصيل',W-M-155],['الوارد',W-M-520],['المصروف',W-M-710],['الدفع/المرجع',W-M-890],['المنفذ',W-M-1080]];cols.forEach(([v,x])=>ctx.fillText(v,x,y+34));y+=66;
+        const slice=list.slice(pi*perPage,(pi+1)*perPage);if(!slice.length){ctx.fillStyle=muted;ctx.font='500 20px Cairo, Arial';ctx.fillText('لا توجد حركات ضمن الفترة المحددة.',W-M,y+40)}
+        slice.forEach((m,idx)=>{const rh=78;ctx.fillStyle=idx%2?soft:'#fff';ctx.fillRect(M,y-7,W-2*M,rh);ctx.fillStyle=text;ctx.font='500 15px Cairo, Arial';ctx.fillText(dateLabel(m.date),W-M-20,y+24);ctx.fillText(String(m.detail||'—').slice(0,34),W-M-155,y+24);const ins=CURRENCIES.map(c=>toUnits(m.amounts?.[c]?.in||0,c)>0n?formatMoney(m.amounts[c].in,c):'').filter(Boolean).join(' + ')||'—',outs=CURRENCIES.map(c=>toUnits(m.amounts?.[c]?.out||0,c)>0n?formatMoney(m.amounts[c].out,c):'').filter(Boolean).join(' + ')||'—';ctx.fillStyle=green;ctx.fillText(ins,W-M-520,y+24);ctx.fillStyle=danger;ctx.fillText(outs,W-M-710,y+24);ctx.fillStyle=text;ctx.fillText(`${paymentMethodLabel(m.paymentMethod)}${m.referenceNo?` / ${m.referenceNo}`:''}`.slice(0,25),W-M-890,y+24);ctx.fillText(String(m.executor||'—').slice(0,18),W-M-1080,y+24);y+=rh});
+        ctx.fillStyle=muted;ctx.font='500 15px Cairo, Arial';ctx.fillText(`${state.settings.companyName} • صفحة ${pi+1} من ${pages}`,W-M,H-42);const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',.92));if(blob)blobs.push({blob,width:W,height:H});
+      }
+      const pdf=await jpegPagesToPdf(blobs),safe=String(entity.name).replace(/[\\/:*?"<>|]+/g,'-').slice(0,40);downloadBlob(pdf,`statement-${safe}-${from||'all'}-${to||today()}.pdf`);toast('تم إنشاء كشف الحساب PDF مع شعار الشركة.');
+    }catch(err){toast(err?.message||'تعذر إنشاء كشف الحساب.','error')}
+  }
+
   function moneyInputs(existingAmounts=null) {
     const amounts=existingAmounts||emptyAmounts();
     return `<div class="money-grid">${CURRENCIES.map(c=>`<div class="money-box" data-currency-box="${c}"><h4>مبالغ ${CURRENCY_META[c].label} ${CURRENCY_META[c].symbol}</h4><div class="money-fields"><div class="money-field in"><label>وارد ${CURRENCY_META[c].label}</label><input class="input money-input" name="${c}_in" type="number" min="0" step="${c==='ILS'||c==='USD'?'0.01':'0.001'}" value="${escapeHtml(amounts[c]?.in||'0')}" /></div><div class="money-field out"><label>مصروف ${CURRENCY_META[c].label}</label><input class="input money-input" name="${c}_out" type="number" min="0" step="${c==='ILS'||c==='USD'?'0.01':'0.001'}" value="${escapeHtml(amounts[c]?.out||'0')}" /></div></div></div>`).join('')}</div>`;
@@ -750,40 +868,44 @@
     const type=prefill.type||m?.type||'general';
     const buildingOptions=[{value:'',label:'مركزي / عام'},...state.buildings.map(b=>({value:b.id,label:b.name}))];
     const projectOptions=[{value:'',label:'بدون مشروع / حساب عام'},...state.projects.map(p=>({value:p.id,label:p.name}))];
-    const tenantOptions=[{value:'',label:'-- اختر المستأجر --'},...state.tenants.map(t=>({value:t.id,label:`${t.name} — ${buildingById(t.buildingId)?.name||''}`}))];
+    const tenantOptions=[{value:'',label:'-- اختر المستأجر --'},...state.tenants.filter(isTenantActive).map(t=>({value:t.id,label:`${t.name} — ${buildingById(t.buildingId)?.name||''}`}))];
     const amounts=m?.amounts||emptyAmounts();
     const rentMonth=prefill.rentMonth||m?.rentMonths?.[0]||m?.rentMonth||currentMonth();
     const rentCount=m?.rentMonths?.length||1;
-    const body=`<div class="form-grid"><label class="field full"><span>نوع الحركة المالية</span><select class="select" name="type" id="movementType"><option value="general" ${type==='general'?'selected':''}>حركة يومية عامة (مصروف / وارد)</option><option value="rent" ${type==='rent'?'selected':''}>تحصيل إيجار مستأجر (ربط تلقائي بجدول الإيجارات)</option></select></label>${field('date','تاريخ الحركة',m?.date||today(),'date','required')}${field('executor','المنفذ',m?.executor||state.settings.defaultExecutor||'')}${selectField('projectId','المشروع',projectOptions,prefill.projectId||m?.projectId||'','full')}${selectField('buildingId','المجال / الحساب / العمارة',buildingOptions,m?.buildingId||'','full')}<div class="full" id="rentFields" style="display:none"><div class="money-box" style="background:var(--primary-soft)"><div class="form-grid" style="padding:0">${selectField('tenantId','اختر المستأجر',tenantOptions,prefill.tenantId||m?.tenantId||'')}${field('rentMonth','من شهر',rentMonth,'month')}${field('rentCount','عدد الأشهر',rentCount,'number','min="1" max="24" step="1"')}<div class="field"><span>الربط</span><div class="form-note">سيتم ربط المبلغ بالأشهر بالتسلسل لحساب المتأخرات.</div></div></div></div></div>${fullField('detail','البيان التوضيحي والتفاصيل',m?.detail||'')}${textareaField('notes','ملاحظات',m?.notes||'')}</div>${moneyInputs(amounts)}`;
-    const {form}=showModal({title:m?'تعديل الحركة المالية':'تسجيل حركة يومية / دفعة مستأجر',subtitle:'يدعم شيكل، دولار، دينار وذهب كوحدات مستقلة',icon:'i-receipt',body,size:'lg',submitText:m?'حفظ التعديل':'حفظ الحركة المالية',onSubmit:(fd,_form,closeModal)=>{
+    const selectedTenant=tenantById(prefill.tenantId||m?.tenantId||'');
+    const rentCurrency=selectedTenant?.rentCurrency||'ILS';
+    const rentReceived=m?unitsToDecimal(toUnits(m.amounts?.[rentCurrency]?.in||0,rentCurrency),rentCurrency,false):'';
+    const flowNote=prefill.flow==='out'?'<div class="form-note voucher-flow-note">سند صرف: أدخل قيمة العملية في خانة «مصروف» للعملة المطلوبة، وسيظهر سند صرف بعد الحفظ.</div>':'';
+    const body=`<div class="form-grid"><label class="field full"><span>نوع الحركة المالية</span><select class="select" name="type" id="movementType"><option value="general" ${type==='general'?'selected':''}>حركة يومية عامة (مصروف / وارد)</option><option value="rent" ${type==='rent'?'selected':''}>تحصيل إيجار مستأجر</option></select></label>${field('date','تاريخ الحركة',m?.date||today(),'date','required')}${field('executor','المنفذ',m?.executor||currentExecutor(),'text','readonly')}${financialMetaFields(m||{})}${selectField('projectId','المشروع',projectOptions,prefill.projectId||m?.projectId||'','full')}${selectField('buildingId','المجال / الحساب / العمارة',buildingOptions,m?.buildingId||'','full')}<div class="full" id="rentFields" style="display:none"><div class="money-box rent-payment-box"><div class="form-grid" style="padding:0">${selectField('tenantId','اختر المستأجر',tenantOptions,prefill.tenantId||m?.tenantId||'')}${field('rentMonth','من شهر',rentMonth,'month')}${field('rentCount','عدد الأشهر',rentCount,'number','min="1" max="24" step="1"')}${field('rentExpected','قيمة الإيجار قبل الخصم',m?.rentExpectedAmount||'','number','readonly')}${field('rentDiscount','خصم لمرة واحدة',m?.rentDiscount||'0','number','min="0" step="0.001"')}${field('rentReceived','المبلغ المقبوض فعلياً',rentReceived,'number','min="0" step="0.001" required')}<div class="field full"><span>التسوية</span><div class="form-note">الخصم يخفض المتأخرات لكنه لا يُسجل كأموال واردة. سند القبض يعرض القيمة قبل الخصم والخصم والمبلغ الذي تم استلامه فعلياً.</div></div></div></div></div>${fullField('detail','البيان التوضيحي والتفاصيل',m?.detail||'')}${textareaField('notes','ملاحظات',m?.notes||'')}</div>${flowNote}<div id="generalMoneyFields">${moneyInputs(amounts)}</div>`;
+    const {form}=showModal({title:m?'تعديل الحركة المالية':prefill.flow==='out'?'سند صرف جديد':'تسجيل حركة يومية / دفعة مستأجر',subtitle:'نقدي أو بنكي مع مرجع واسم البنك/المحفظة',icon:'i-receipt',body,size:'lg',submitText:m?'حفظ التعديل':prefill.flow==='out'?'حفظ سند الصرف':'حفظ الحركة المالية',onSubmit:(fd,_form,closeModal)=>{
       const movementType=fd.get('type');
-      const outAmounts=emptyAmounts(); let any=false;
-      CURRENCIES.forEach(c=>{outAmounts[c].in=normalizeAmount(fd.get(`${c}_in`)||0,c);outAmounts[c].out=normalizeAmount(fd.get(`${c}_out`)||0,c);if(toUnits(outAmounts[c].in,c)>0n||toUnits(outAmounts[c].out,c)>0n)any=true;});
-      if(!any){toast('أدخل مبلغاً واحداً على الأقل في الوارد أو المصروف.','error');return false;}
-      let tenantId='',rentMonths=[]; let buildingId=fd.get('buildingId')||'';
+      const outAmounts=emptyAmounts();let any=false,tenantId='',rentMonths=[],rentDiscount='0',rentExpectedAmount='';let buildingId=fd.get('buildingId')||'';
       if(movementType==='rent'){
-        tenantId=fd.get('tenantId')||''; const tenant=tenantById(tenantId); if(!tenant){toast('اختر المستأجر.','error');return false;}
-        const start=fd.get('rentMonth'); const count=Math.max(1,Number(fd.get('rentCount')||1)); if(!start){toast('حدد الشهر الذي تبدأ منه الدفعة.','error');return false;}
-        rentMonths=monthRange(start,count); buildingId=tenant.buildingId;
-        const rentCurrency=tenant.rentCurrency; if(toUnits(outAmounts[rentCurrency].in,rentCurrency)<=0n){toast(`دفعة الإيجار يجب أن تحتوي وارداً بعملة العقد: ${CURRENCY_META[rentCurrency].label}.`,'error');return false;}
+        tenantId=fd.get('tenantId')||'';const tenant=tenantById(tenantId);if(!tenant){toast('اختر المستأجر.','error');return false;}
+        const start=fd.get('rentMonth'),count=Math.max(1,Number(fd.get('rentCount')||1));if(!start){toast('حدد الشهر الذي تبدأ منه الدفعة.','error');return false;}
+        rentMonths=monthRange(start,count);buildingId=tenant.buildingId;const c=tenant.rentCurrency;
+        rentDiscount=normalizeAmount(fd.get('rentDiscount')||0,c);rentExpectedAmount=normalizeAmount(fd.get('rentExpected')||0,c);const received=normalizeAmount(fd.get('rentReceived')||0,c);
+        if(toUnits(received,c)<=0n&&toUnits(rentDiscount,c)<=0n){toast('أدخل المبلغ المقبوض أو قيمة الخصم.','error');return false;}
+        outAmounts[c].in=received;any=true;
+      }else{
+        CURRENCIES.forEach(c=>{outAmounts[c].in=normalizeAmount(fd.get(`${c}_in`)||0,c);outAmounts[c].out=normalizeAmount(fd.get(`${c}_out`)||0,c);if(toUnits(outAmounts[c].in,c)>0n||toUnits(outAmounts[c].out,c)>0n)any=true;});
+        if(!any){toast('أدخل مبلغاً واحداً على الأقل في الوارد أو المصروف.','error');return false;}
       }
-      const rec={id:m?.id||uid('m'),type:movementType,date:fd.get('date')||today(),executor:String(fd.get('executor')||'').trim(),projectId:fd.get('projectId')||'',buildingId,tenantId,rentMonths,detail:String(fd.get('detail')||'').trim() || (movementType==='rent'?'دفعة إيجار':'حركة مالية'),notes:String(fd.get('notes')||'').trim(),amounts:outAmounts,receiptNo:m?.receiptNo||makeReceiptNo(),createdAt:m?.createdAt||new Date().toISOString()};
-      if(m) Object.assign(m,rec); else state.movements.push(rec);
-      saveState();
-      toast(m?'تم تعديل الحركة المالية.':'تم حفظ الحركة المالية بنجاح.');
-      const hasIncoming=CURRENCIES.some(c=>toUnits(rec.amounts?.[c]?.in||0,c)>0n);
-      if(!m && movementType==='rent' && hasIncoming){
-        closeModal();
-        setTimeout(()=>openReceiptActions(rec.id),80);
-        return false;
-      }
+      const paymentMethod=fd.get('paymentMethod')==='bank'?'bank':'cash',referenceNo=String(fd.get('referenceNo')||'').trim(),bankWallet=String(fd.get('bankWallet')||'').trim();
+      if(paymentMethod==='bank'&&!bankWallet){toast('أدخل اسم البنك أو المحفظة للعملية البنكية.','error');return false;}
+      const rec={id:m?.id||uid('m'),type:movementType,date:fd.get('date')||today(),executor:currentExecutor(),paymentMethod,referenceNo,bankWallet,projectId:fd.get('projectId')||'',buildingId,tenantId,rentMonths,rentDiscount,rentExpectedAmount,detail:String(fd.get('detail')||'').trim() || (movementType==='rent'?'دفعة إيجار':prefill.flow==='out'?'سند صرف':'حركة مالية'),notes:String(fd.get('notes')||'').trim(),amounts:outAmounts,receiptNo:m?.receiptNo||makeReceiptNo(),createdAt:m?.createdAt||new Date().toISOString()};
+      if(m)Object.assign(m,rec);else state.movements.push(rec);saveState();toast(m?'تم تعديل الحركة المالية.':'تم حفظ الحركة المالية بنجاح.');
+      const hasIncoming=CURRENCIES.some(c=>toUnits(rec.amounts?.[c]?.in||0,c)>0n),hasOutgoing=CURRENCIES.some(c=>toUnits(rec.amounts?.[c]?.out||0,c)>0n);
+      if(!m&&movementType==='rent'&&hasIncoming){closeModal();setTimeout(()=>openReceiptActions(rec.id),80);return false;}
+      if(!m&&prefill.flow==='out'&&hasOutgoing){closeModal();setTimeout(()=>openPaymentVoucherActions(rec.id),80);return false;}
       return true;
     }});
-    const typeEl=$('#movementType',form), rentFields=$('#rentFields',form), tenantEl=$('[name="tenantId"]',form), monthEl=$('[name="rentMonth"]',form), countEl=$('[name="rentCount"]',form), buildingEl=$('[name="buildingId"]',form);
-    const toggleRent=()=>{const isRent=typeEl.value==='rent';rentFields.style.display=isRent?'block':'none';if(isRent&&!state.tenants.length)toast('لا يوجد مستأجرون بعد. أضف مستأجراً أولاً.','info');};
-    const autoRent=()=>{if(typeEl.value!=='rent')return;const tenant=tenantById(tenantEl.value);if(!tenant)return;buildingEl.value=tenant.buildingId||'';const count=Math.max(1,Number(countEl.value||1));const total=toUnits(tenant.rentAmount,tenant.rentCurrency)*BigInt(count);CURRENCIES.forEach(c=>{const input=$(`[name="${c}_in"]`,form);if(input) input.value=c===tenant.rentCurrency?unitsToDecimal(total,c,false):normalizeAmount('0',c);});};
-    typeEl.addEventListener('change',()=>{toggleRent();autoRent();}); tenantEl?.addEventListener('change',autoRent); countEl?.addEventListener('input',autoRent); monthEl?.addEventListener('change',()=>{}); toggleRent();
-    if(!m && type==='rent') setTimeout(autoRent,20);
+    const typeEl=$('#movementType',form),rentFields=$('#rentFields',form),generalMoney=$('#generalMoneyFields',form),tenantEl=$('[name="tenantId"]',form),monthEl=$('[name="rentMonth"]',form),countEl=$('[name="rentCount"]',form),buildingEl=$('[name="buildingId"]',form),expectedEl=$('[name="rentExpected"]',form),discountEl=$('[name="rentDiscount"]',form),receivedEl=$('[name="rentReceived"]',form);
+    const toggleRent=()=>{const isRent=typeEl.value==='rent';rentFields.style.display=isRent?'block':'none';generalMoney.style.display=isRent?'none':'block';if(isRent&&!tenantOptions.slice(1).length)toast('لا يوجد مستأجرون حاليون بعد.','info');};
+    const autoRent=()=>{if(typeEl.value!=='rent')return;const tenant=tenantById(tenantEl.value);if(!tenant)return;buildingEl.value=tenant.buildingId||'';const count=Math.max(1,Number(countEl.value||1)),total=toUnits(tenant.rentAmount,tenant.rentCurrency)*BigInt(count);expectedEl.value=unitsToDecimal(total,tenant.rentCurrency,false);const discount=toUnits(discountEl.value||0,tenant.rentCurrency),actual=total>discount?total-discount:0n;receivedEl.value=unitsToDecimal(actual,tenant.rentCurrency,false);receivedEl.step=CURRENCY_META[tenant.rentCurrency].precision===2?'0.01':'0.001';discountEl.step=receivedEl.step;};
+    typeEl.addEventListener('change',()=>{toggleRent();if(typeEl.value==='rent')autoRent();});tenantEl?.addEventListener('change',autoRent);countEl?.addEventListener('input',autoRent);discountEl?.addEventListener('input',autoRent);monthEl?.addEventListener('change',()=>{});toggleRent();
+    if(!m&&type==='rent')setTimeout(autoRent,20);
+    if(!m&&prefill.flow==='out')setTimeout(()=>{CURRENCIES.forEach(c=>{const i=$(`[name="${c}_in"]`,form);if(i)i.value=normalizeAmount('0',c);});},0);
   }
 
   function makeReceiptNo(){return `${state.settings.receiptPrefix||'SH'}-${today().replaceAll('-','')}-${String(state.movements.length+1).padStart(4,'0')}`;}
@@ -792,53 +914,35 @@
     const d=id?debtById(id):null;
     const currencyOptions=CURRENCIES.map(c=>({value:c,label:CURRENCY_META[c].label}));
     const projectOptions=[{value:'',label:'بدون مشروع / حساب عام'},...state.projects.map(p=>({value:p.id,label:p.name}))];
-    const directionOptions=[
-      {value:'receivable',label:'دين لنا — مبلغ مطلوب لنا من شخص / جهة'},
-      {value:'payable',label:'دين علينا — مبلغ مستحق علينا لشخص / جهة'}
-    ];
-    const body=`<div class="form-grid">${selectField('direction','نوع الدين',directionOptions,prefill.direction||d?.direction||'receivable','full')}${selectField('projectId','المشروع',projectOptions,prefill.projectId||d?.projectId||'','full')}${fullField('name','اسم الشخص / الجهة',d?.name||'','text','required')}${field('phone','رقم الجوال',d?.phone||'','tel')}${field('idNumber','رقم الهوية / المرجع',d?.idNumber||'')}${field('date','تاريخ تسجيل الدين',d?.date||today(),'date','required')}${field('amount','المبلغ الأصلي',d?.amount||'','number','min="0" step="0.001" required')}${selectField('currency','العملة',currencyOptions,d?.currency||'ILS')}${textareaField('notes','ملاحظات',d?.notes||'')}</div><div class="form-note">«ديون لنا» هي المبالغ التي نريد تحصيلها من الآخرين. «ديون علينا» هي المبالغ المطلوب منا سدادها. عند كل تحصيل أو سداد تُسجّل حركة مالية تلقائياً في الحركة اليومية.</div>`;
-    showModal({title:d?'تعديل الدين':'إضافة دين جديد',subtitle:'اختر بوضوح هل الدين لنا أم علينا',icon:'i-debt',body,onSubmit:(fd)=>{
-      const c=fd.get('currency'), direction=fd.get('direction')==='payable'?'payable':'receivable', projectId=fd.get('projectId')||'', amount=normalizeAmount(fd.get('amount'),c);
+    const directionOptions=[{value:'receivable',label:'دين لنا — مبلغ مطلوب لنا من شخص / جهة'},{value:'payable',label:'دين علينا — مبلغ مستحق علينا لشخص / جهة'}];
+    const planOptions=[{value:'none',label:'بدون تقسيط شهري'},{value:'monthly',label:'تقسيط شهري مع تنبيه استحقاق'}];
+    const body=`<div class="form-grid">${selectField('direction','نوع الدين',directionOptions,prefill.direction||d?.direction||'receivable','full')}${selectField('projectId','المشروع',projectOptions,prefill.projectId||d?.projectId||'','full')}${fullField('name','اسم الشخص / الجهة',d?.name||'','text','required')}${field('phone','رقم الجوال',d?.phone||'','tel')}${field('idNumber','رقم الهوية / المرجع',d?.idNumber||'')}${field('date','تاريخ تسجيل الدين',d?.date||today(),'date','required')}${field('amount','المبلغ الأصلي',d?.amount||'','number','min="0" step="0.001" required')}${selectField('currency','العملة',currencyOptions,d?.currency||'ILS')}${selectField('installmentPlan','طريقة السداد',planOptions,d?.installmentEnabled?'monthly':'none','full')}<div class="full" id="installmentFields"><div class="form-grid installment-box">${field('installmentAmount','قيمة القسط الشهري',d?.installmentAmount||'','number','min="0" step="0.001"')}${field('installmentDueDay','يوم الاستحقاق من كل شهر',d?.installmentDueDay||1,'number','min="1" max="28" step="1"')}${field('installmentStartMonth','بداية التقسيط',d?.installmentStartMonth||String(d?.date||today()).slice(0,7),'month')}</div></div>${textareaField('notes','ملاحظات',d?.notes||'')}</div><div class="form-note">عند اختيار التقسيط الشهري سيظهر تنبيه تلقائي عند حلول موعد القسط أو تأخره، ويُحسب حسب إجمالي التحصيلات/الدفعات المسجلة على الدين.</div>`;
+    const {form}=showModal({title:d?'تعديل الدين':'إضافة دين جديد',subtitle:'ديون لنا وعلينا مع إمكانية التقسيط والتنبيهات',icon:'i-debt',body,onSubmit:(fd)=>{
+      const c=fd.get('currency'),direction=fd.get('direction')==='payable'?'payable':'receivable',projectId=fd.get('projectId')||'',amount=normalizeAmount(fd.get('amount'),c);
       if(toUnits(amount,c)<=0n){toast('المبلغ يجب أن يكون أكبر من صفر.','error');return false;}
       if(!String(fd.get('name')||'').trim()){toast('أدخل اسم الشخص أو الجهة.','error');return false;}
       if(d&&c!==d.currency&&debtPaidUnits(d)>0n){toast('لا يمكن تغيير عملة دين عليه دفعات مسجلة.','error');return false;}
       if(d&&direction!==(d.direction||'receivable')&&debtPaidUnits(d)>0n){toast('لا يمكن تغيير نوع الدين بعد تسجيل تحصيل أو سداد عليه.','error');return false;}
       if(d&&projectId!==(d.projectId||'')&&debtPaidUnits(d)>0n){toast('لا يمكن نقل الدين إلى مشروع آخر بعد تسجيل تحصيل أو سداد عليه.','error');return false;}
-      const rec={id:d?.id||uid('d'),direction,projectId,name:String(fd.get('name')||'').trim(),phone:String(fd.get('phone')||'').trim(),idNumber:String(fd.get('idNumber')||'').trim(),date:fd.get('date')||today(),amount,currency:c,notes:String(fd.get('notes')||'').trim(),status:d?.status||'open',completedDate:d?.completedDate||'',createdAt:d?.createdAt||new Date().toISOString()};
-      if(d)Object.assign(d,rec);else state.debts.push(rec);
-      activeDebtTab=d?.status==='closed'?'closed':direction;
-      if(projectId&&projectId===activeProjectId&&activeView==='project-details') activeProjectTab=d?.status==='closed'?'closed':direction;
-      saveState();toast(d?'تم تحديث الدين.':direction==='receivable'?'تم تسجيل دين لنا بنجاح.':'تم تسجيل دين علينا بنجاح.');return true;
+      const installmentEnabled=fd.get('installmentPlan')==='monthly';let installmentAmount='',installmentDueDay=1,installmentStartMonth='';
+      if(installmentEnabled){installmentAmount=normalizeAmount(fd.get('installmentAmount')||0,c);installmentDueDay=Math.min(28,Math.max(1,Number(fd.get('installmentDueDay')||1)));installmentStartMonth=fd.get('installmentStartMonth')||String(fd.get('date')||today()).slice(0,7);if(toUnits(installmentAmount,c)<=0n){toast('أدخل قيمة القسط الشهري.','error');return false;}}
+      const rec={id:d?.id||uid('d'),direction,projectId,tenantId:d?.tenantId||'',buildingId:d?.buildingId||'',source:d?.source||'',name:String(fd.get('name')||'').trim(),phone:String(fd.get('phone')||'').trim(),idNumber:String(fd.get('idNumber')||'').trim(),date:fd.get('date')||today(),amount,currency:c,installmentEnabled,installmentAmount,installmentDueDay,installmentStartMonth,notes:String(fd.get('notes')||'').trim(),status:d?.status||'open',completedDate:d?.completedDate||'',createdAt:d?.createdAt||new Date().toISOString()};
+      if(d)Object.assign(d,rec);else state.debts.push(rec);activeDebtTab=d?.status==='closed'?'closed':direction;if(projectId&&projectId===activeProjectId&&activeView==='project-details')activeProjectTab=d?.status==='closed'?'closed':direction;saveState();toast(d?'تم تحديث الدين.':direction==='receivable'?'تم تسجيل دين لنا بنجاح.':'تم تسجيل دين علينا بنجاح.');return true;
     }});
+    const plan=form.elements.installmentPlan,fields=$('#installmentFields',form);const toggle=()=>{fields.style.display=plan.value==='monthly'?'block':'none'};plan.addEventListener('change',toggle);toggle();
   }
 
   function openDebtPaymentModal(debtId) {
     const d=debtById(debtId); if(!d)return;
-    const rem=debtRemainingUnits(d), c=d.currency, direction=d.direction||'receivable';
-    const isReceivable=direction==='receivable';
-    const operation=isReceivable?'تحصيل':'سداد';
-    const body=`<div class="debt-payment-head"><div><small>الحساب</small><strong>${escapeHtml(d.name)}</strong></div><div><small>المبلغ المتبقي</small><strong class="${isReceivable?'money-in':'money-out'}">${formatMoney(rem,c,true)}</strong></div></div><div class="form-grid">${field('amount',`قيمة ${operation}`,unitsToDecimal(rem,c,false),'number',`min="0" step="${CURRENCY_META[c].precision===2?'0.01':'0.001'}" required`)}${field('date',`تاريخ ${operation}`,today(),'date','required')}${field('executor','المنفذ',state.settings.defaultExecutor||'')}${textareaField('notes','ملاحظات','')}</div><div class="form-note">سيتم تسجيل ${isReceivable?'وارد':'مصروف'} تلقائياً بقيمة العملية في الحركة اليومية وبنفس العملة.${isReceivable?' وبعد الحفظ سيظهر سند قبض جاهز للتنزيل أو الإرسال عبر واتساب أو رسالة جوال.':''}</div>`;
+    const rem=debtRemainingUnits(d),c=d.currency,direction=d.direction||'receivable',isReceivable=direction==='receivable',operation=isReceivable?'تحصيل':'سداد';
+    const body=`<div class="debt-payment-head"><div><small>الحساب</small><strong>${escapeHtml(d.name)}</strong></div><div><small>المبلغ المتبقي</small><strong class="${isReceivable?'money-in':'money-out'}">${formatMoney(rem,c,true)}</strong></div></div><div class="form-grid">${field('amount',`قيمة ${operation}`,unitsToDecimal(rem,c,false),'number',`min="0" step="${CURRENCY_META[c].precision===2?'0.01':'0.001'}" required`)}${field('date',`تاريخ ${operation}`,today(),'date','required')}${field('executor','المنفذ',currentExecutor(),'text','readonly')}${financialMetaFields({})}${textareaField('notes','ملاحظات','')}</div><div class="form-note">سيتم تسجيل ${isReceivable?'وارد':'مصروف'} تلقائياً في الحركة اليومية، مع طريقة الدفع ورقم المرجع واسم البنك/المحفظة.${isReceivable?' وبعد الحفظ سيظهر سند قبض جاهز.':' وبعد الحفظ سيظهر سند صرف جاهز.'}</div>`;
     showModal({title:`تسجيل ${operation} دين`,subtitle:`${isReceivable?'دين لنا':'دين علينا'} — العملة: ${CURRENCY_META[c].label}`,icon:'i-check',body,submitText:`حفظ ${operation}`,onSubmit:(fd,form,close)=>{
-      const amount=normalizeAmount(fd.get('amount'),c),u=toUnits(amount,c);
-      if(u<=0n){toast(`أدخل قيمة ${operation} صحيحة.`,'error');return false;}
-      if(u>rem){toast(`قيمة ${operation} أكبر من المبلغ المتبقي.`,'error');return false;}
-      const date=fd.get('date')||today(), executor=String(fd.get('executor')||'').trim(), notes=String(fd.get('notes')||'').trim();
-      const paymentId=uid('dp');
-      const amounts=emptyAmounts();
-      amounts[c][isReceivable?'in':'out']=amount;
-      const movementId=uid('m');
-      const movement={id:movementId,type:'general',date,executor,projectId:d.projectId||'',buildingId:'',tenantId:'',account:d.name,detail:`${operation} دين ${isReceivable?'من':'إلى'} ${d.name}`,notes:notes||`مرتبط بالدين ${d.name}`,amounts,receiptNo:isReceivable?makeReceiptNo():'',debtId:d.id,debtPaymentId:paymentId,createdAt:new Date().toISOString()};
-      state.movements.push(movement);
-      state.debtPayments.push({id:paymentId,debtId:d.id,movementId,amount,currency:c,date,executor,notes,receiptNo:movement.receiptNo||'',createdAt:new Date().toISOString()});
-      const after=rem-u;
-      if(after===0n){d.status='closed';d.completedDate=date;if(d.projectId===activeProjectId&&activeView==='project-details')activeProjectTab='closed';toast(`تم ${operation} الدين بالكامل ونقله إلى «تم السداد والانتهاء».`);}else {if(d.projectId===activeProjectId&&activeView==='project-details')activeProjectTab=direction;toast(`تم تسجيل ${operation}. المتبقي ${formatMoney(after,c,true)}.`);}
-      saveState();
-      if(isReceivable){
-        close();
-        setTimeout(()=>openReceiptActions(movementId),90);
-        return false;
-      }
-      return true;
+      const amount=normalizeAmount(fd.get('amount'),c),u=toUnits(amount,c);if(u<=0n){toast(`أدخل قيمة ${operation} صحيحة.`,'error');return false;}if(u>rem){toast(`قيمة ${operation} أكبر من المبلغ المتبقي.`,'error');return false;}
+      const date=fd.get('date')||today(),executor=currentExecutor(),notes=String(fd.get('notes')||'').trim(),paymentMethod=fd.get('paymentMethod')==='bank'?'bank':'cash',referenceNo=String(fd.get('referenceNo')||'').trim(),bankWallet=String(fd.get('bankWallet')||'').trim();if(paymentMethod==='bank'&&!bankWallet){toast('أدخل اسم البنك أو المحفظة.','error');return false;}
+      const paymentId=uid('dp'),amounts=emptyAmounts();amounts[c][isReceivable?'in':'out']=amount;const movementId=uid('m');
+      const movement={id:movementId,type:'general',date,executor,paymentMethod,referenceNo,bankWallet,projectId:d.projectId||'',buildingId:d.buildingId||'',tenantId:d.tenantId||'',account:d.name,detail:`${operation} دين ${isReceivable?'من':'إلى'} ${d.name}`,notes:notes||`مرتبط بالدين ${d.name}`,amounts,receiptNo:makeReceiptNo(),debtId:d.id,debtPaymentId:paymentId,createdAt:new Date().toISOString()};
+      state.movements.push(movement);state.debtPayments.push({id:paymentId,debtId:d.id,movementId,amount,currency:c,date,executor,paymentMethod,referenceNo,bankWallet,notes,receiptNo:movement.receiptNo||'',createdAt:new Date().toISOString()});
+      const after=rem-u;if(after===0n){d.status='closed';d.completedDate=date;if(d.projectId===activeProjectId&&activeView==='project-details')activeProjectTab='closed';toast(`تم ${operation} الدين بالكامل ونقله إلى «تم السداد والانتهاء».`);}else{if(d.projectId===activeProjectId&&activeView==='project-details')activeProjectTab=direction;toast(`تم تسجيل ${operation}. المتبقي ${formatMoney(after,c,true)}.`);}saveState();close();setTimeout(()=>isReceivable?openReceiptActions(movementId):openPaymentVoucherActions(movementId),90);return false;
     }});
   }
 
@@ -957,120 +1061,59 @@
     }});
   }
 
-  async function buildReceiptJpg(movementId) {
-    const m=state.movements.find(x=>x.id===movementId); if(!m)return null;
-    const canvas=document.createElement('canvas'); canvas.width=1200;canvas.height=1500;const ctx=canvas.getContext('2d');
-    ctx.fillStyle='#ffffff';ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.fillStyle='#0b4d8f';ctx.fillRect(0,0,canvas.width,26);
-    let logo=null; try{logo=await loadImage('shahd-logo.jpg');}catch(e){}
-    if(logo){const maxW=540,maxH=270,ratio=Math.min(maxW/logo.width,maxH/logo.height);const w=logo.width*ratio,h=logo.height*ratio;ctx.drawImage(logo,(canvas.width-w)/2,60,w,h);}
-    ctx.direction='rtl';ctx.textAlign='right';ctx.fillStyle='#172033';ctx.font='bold 54px Cairo, Tahoma, Arial';ctx.fillText('سند قبض',1080,365);
-    ctx.fillStyle='#6b778c';ctx.font='26px Cairo, Tahoma, Arial';ctx.fillText(`${state.settings.companyName} — ${state.settings.companySubtitle}`,1080,415);
-    ctx.strokeStyle='#dfe6ef';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(120,455);ctx.lineTo(1080,455);ctx.stroke();
-    const tenant=tenantById(m.tenantId),building=buildingById(m.buildingId),project=projectById(m.projectId),debt=debtById(m.debtId);
-    const accountName=building?.name||project?.name||m.account||debt?.name||'مركزي';
-    const receivedFrom=tenant?.name||debt?.name||m.account||building?.name||project?.name||'—';
-    const rows=[['رقم السند',m.receiptNo||m.id],['التاريخ',dateLabel(m.date)],['استلمنا من',receivedFrom],['العقار / الحساب',accountName],['البيان',m.detail||'—'],['عن شهر',m.rentMonths?.length?m.rentMonths.map(monthLabel).join('، '):debt?'تحصيل دفعة من دين':'—'],['المنفذ',m.executor||'—']];
-    let y=525; ctx.font='bold 27px Cairo, Tahoma, Arial';
-    rows.forEach(([label,value])=>{ctx.fillStyle='#6b778c';ctx.fillText(label,1080,y);ctx.fillStyle='#172033';ctx.font='bold 29px Cairo, Tahoma, Arial';wrapText(ctx,String(value),760,y,720,42);ctx.font='bold 27px Cairo, Tahoma, Arial';y+=88;});
-    y+=10;ctx.fillStyle='#f4f7fb';roundRect(ctx,120,y,960,250,22,true,false);ctx.fillStyle='#0b4d8f';ctx.font='bold 31px Cairo, Tahoma, Arial';ctx.fillText('المبلغ المقبوض',1030,y+55);
-    let my=y+108;CURRENCIES.forEach(c=>{const u=toUnits(m.amounts?.[c]?.in||0,c);if(u>0n){ctx.fillStyle='#0f9d71';ctx.font='bold 38px Cairo, Tahoma, Arial';ctx.fillText(`${CURRENCY_META[c].label}: ${formatMoney(u,c,true)}`,1030,my);my+=50;}});
-    ctx.fillStyle='#6b778c';ctx.font='23px Cairo, Tahoma, Arial';ctx.fillText('تم إنشاء هذا السند إلكترونياً من نظام شركة شهد لإدارة العقارات والحسابات.',1080,1370);
-    ctx.fillStyle='#0b4d8f';ctx.fillRect(120,1415,960,4);
-    const blob=await new Promise(res=>canvas.toBlob(res,'image/jpeg',0.94));
-    return {blob,fileName:`receipt-${m.receiptNo||m.id}.jpg`,movement:m,tenant,building,project};
+  async function buildVoucherJpg(movementId,flow='in') {
+    const m=state.movements.find(x=>x.id===movementId);if(!m)return null;
+    const isIn=flow!=='out',title=isIn?'سند قبض':'سند صرف';
+    const canvas=document.createElement('canvas');canvas.width=1200;canvas.height=1700;const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle=isIn?'#0b4d8f':'#b83245';ctx.fillRect(0,0,canvas.width,26);
+    let logo=null;try{logo=await loadImage('shahd-logo.jpg')}catch(_){}if(logo){const maxW=520,maxH=235,r=Math.min(maxW/logo.width,maxH/logo.height);ctx.drawImage(logo,(canvas.width-logo.width*r)/2,55,logo.width*r,logo.height*r)}
+    ctx.direction='rtl';ctx.textAlign='right';ctx.fillStyle='#172033';ctx.font='bold 54px Cairo, Tahoma, Arial';ctx.fillText(title,1080,335);ctx.fillStyle='#6b778c';ctx.font='26px Cairo, Tahoma, Arial';ctx.fillText(`${state.settings.companyName} — ${state.settings.companySubtitle}`,1080,382);ctx.strokeStyle='#dfe6ef';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(120,425);ctx.lineTo(1080,425);ctx.stroke();
+    const tenant=tenantById(m.tenantId),building=buildingById(m.buildingId),project=projectById(m.projectId),debt=debtById(m.debtId),accountName=building?.name||project?.name||m.account||debt?.name||'مركزي',party=tenant?.name||debt?.name||m.account||building?.name||project?.name||'—';
+    const rows=[['رقم السند',m.receiptNo||m.id],['التاريخ',dateLabel(m.date)],[isIn?'استلمنا من':'صُرف إلى',party],['العقار / الحساب',accountName],['البيان',m.detail||'—'],['طريقة الدفع',paymentMethodLabel(m.paymentMethod)],['رقم المرجع',m.referenceNo||'—'],['البنك / المحفظة',m.bankWallet||'—']];
+    if(m.rentMonths?.length)rows.push(['عن شهر',m.rentMonths.map(monthLabel).join('، ')]);
+    if(m.type==='rent'&&tenant){if(toUnits(m.rentExpectedAmount||0,tenant.rentCurrency)>0n)rows.push(['القيمة قبل الخصم',formatMoney(m.rentExpectedAmount,tenant.rentCurrency)]);if(toUnits(m.rentDiscount||0,tenant.rentCurrency)>0n)rows.push(['خصم لمرة واحدة',formatMoney(m.rentDiscount,tenant.rentCurrency)]);}
+    rows.push(['المنفذ',m.executor||'—']);let y=480;ctx.font='bold 24px Cairo, Tahoma, Arial';rows.forEach(([label,value])=>{ctx.fillStyle='#6b778c';ctx.fillText(label,1080,y);ctx.fillStyle='#172033';ctx.font='bold 26px Cairo, Tahoma, Arial';wrapText(ctx,String(value),760,y,720,36);ctx.font='bold 24px Cairo, Tahoma, Arial';y+=64;});
+    y+=16;ctx.fillStyle='#f4f7fb';roundRect(ctx,120,y,960,230,22,true,false);ctx.fillStyle=isIn?'#0b4d8f':'#b83245';ctx.font='bold 31px Cairo, Tahoma, Arial';ctx.fillText(isIn?'المبلغ المقبوض فعلياً':'المبلغ المصروف',1030,y+52);let my=y+105;CURRENCIES.forEach(c=>{const u=toUnits(m.amounts?.[c]?.[isIn?'in':'out']||0,c);if(u>0n){ctx.fillStyle=isIn?'#0f9d71':'#d9394b';ctx.font='bold 37px Cairo, Tahoma, Arial';ctx.fillText(`${CURRENCY_META[c].label}: ${formatMoney(u,c,true)}`,1030,my);my+=48;}});
+    ctx.fillStyle='#6b778c';ctx.font='22px Cairo, Tahoma, Arial';ctx.fillText(`تم إنشاء هذا ${title} إلكترونياً من نظام شركة شهد.`,1080,1600);ctx.fillStyle=isIn?'#0b4d8f':'#b83245';ctx.fillRect(120,1640,960,4);const blob=await new Promise(res=>canvas.toBlob(res,'image/jpeg',.94));return{blob,fileName:`${isIn?'receipt':'payment-voucher'}-${m.receiptNo||m.id}.jpg`,movement:m,tenant,building,project,debt,flow:isIn?'in':'out'};
   }
 
-  async function exportReceiptJpg(movementId) {
-    const receipt=await buildReceiptJpg(movementId); if(!receipt)return;
-    downloadBlob(receipt.blob,receipt.fileName);
-    toast('تم تنزيل سند القبض بصيغة JPG.');
+  async function buildReceiptJpg(movementId){return buildVoucherJpg(movementId,'in')}
+  async function exportVoucherJpg(movementId,flow='in'){const v=await buildVoucherJpg(movementId,flow);if(!v)return;downloadBlob(v.blob,v.fileName);toast(`تم تنزيل ${flow==='out'?'سند الصرف':'سند القبض'} بصيغة JPG.`)}
+  async function exportReceiptJpg(movementId){return exportVoucherJpg(movementId,'in')}
+
+  function voucherText(movementId,flow='in'){
+    const m=state.movements.find(x=>x.id===movementId);if(!m)return '';const isIn=flow!=='out',tenant=tenantById(m.tenantId),building=buildingById(m.buildingId),project=projectById(m.projectId),debt=debtById(m.debtId),amounts=CURRENCIES.map(c=>{const u=toUnits(m.amounts?.[c]?.[isIn?'in':'out']||0,c);return u>0n?formatMoney(u,c,true):''}).filter(Boolean).join(' + '),months=m.rentMonths?.length?m.rentMonths.map(monthLabel).join('، '):'',extra=[];
+    if(m.type==='rent'&&tenant){if(toUnits(m.rentExpectedAmount||0,tenant.rentCurrency)>0n)extra.push(`القيمة قبل الخصم: ${formatMoney(m.rentExpectedAmount,tenant.rentCurrency)}`);if(toUnits(m.rentDiscount||0,tenant.rentCurrency)>0n)extra.push(`الخصم: ${formatMoney(m.rentDiscount,tenant.rentCurrency)}`)}
+    return `${isIn?'سند قبض':'سند صرف'} رقم ${m.receiptNo||m.id}\nالتاريخ: ${dateLabel(m.date)}\n${isIn?'استلمنا من':'صُرف إلى'}: ${tenant?.name||debt?.name||m.account||'—'}\nالحساب: ${building?.name||project?.name||debt?.name||m.account||'مركزي'}\n${isIn?'المبلغ المقبوض فعلياً':'المبلغ المصروف'}: ${amounts||'—'}${months?`\nعن شهر: ${months}`:''}${extra.length?`\n${extra.join('\n')}`:''}\nطريقة الدفع: ${paymentMethodLabel(m.paymentMethod)}${m.bankWallet?` — ${m.bankWallet}`:''}${m.referenceNo?`\nرقم المرجع: ${m.referenceNo}`:''}\nالمنفذ: ${m.executor||'—'}\n${state.settings.companyName}`;
+  }
+  function receiptText(movementId){return voucherText(movementId,'in')}
+
+  function normalizeWhatsAppNumber(phone){let p=String(phone||'').trim().replace(/[^0-9+]/g,'');if(p.startsWith('+'))return p.slice(1);if(p.startsWith('00'))return p.slice(2);const cc=String(state.settings.whatsappCountryCode||'970').replace(/\D/g,'');if(p.startsWith('0'))return cc+p.slice(1);return p;}
+
+  async function copyVoucherImage(blob){
+    if(!navigator.clipboard?.write||typeof ClipboardItem==='undefined')return false;
+    try{const bmp=await createImageBitmap(blob),canvas=document.createElement('canvas');canvas.width=bmp.width;canvas.height=bmp.height;canvas.getContext('2d').drawImage(bmp,0,0);const png=await new Promise(r=>canvas.toBlob(r,'image/png'));if(!png)return false;await navigator.clipboard.write([new ClipboardItem({'image/png':png})]);return true}catch(_){return false}
   }
 
-  function receiptText(movementId) {
-    const m=state.movements.find(x=>x.id===movementId); if(!m)return '';
-    const tenant=tenantById(m.tenantId),building=buildingById(m.buildingId),project=projectById(m.projectId),debt=debtById(m.debtId);
-    const amounts=CURRENCIES.map(c=>{const u=toUnits(m.amounts?.[c]?.in||0,c);return u>0n?formatMoney(u,c,true):'';}).filter(Boolean).join(' + ');
-    const months=m.rentMonths?.length?m.rentMonths.map(monthLabel).join('، '):'';
-    return `سند قبض رقم ${m.receiptNo||m.id}
-التاريخ: ${dateLabel(m.date)}
-استلمنا من: ${tenant?.name||debt?.name||m.account||'—'}
-الحساب: ${building?.name||project?.name||debt?.name||m.account||'مركزي'}
-المبلغ: ${amounts||'—'}${months?`
-عن شهر: ${months}`:''}
-${state.settings.companyName}`;
+  async function sendVoucherWhatsApp(movementId,flow='in'){
+    const m=state.movements.find(x=>x.id===movementId);if(!m)return;const tenant=tenantById(m.tenantId),debt=debtById(m.debtId),number=normalizeWhatsAppNumber(tenant?.phone||debt?.phone||'');if(!number){toast('لا يوجد رقم واتساب محفوظ لهذا الحساب. أضف رقم الجوال أولاً.','error');return;}
+    const popup=window.open('about:blank','_blank');try{const voucher=await buildVoucherJpg(movementId,flow);if(!voucher)throw new Error('تعذر تجهيز السند.');const tgUpload=window.ShahdMedia?.uploadTransient?.(voucher.blob,voucher.fileName);if(tgUpload?.catch)tgUpload.catch(()=>{});const copied=await copyVoucherImage(voucher.blob);const url=`https://wa.me/${number}?text=${encodeURIComponent(voucherText(movementId,flow))}`;if(popup)popup.location.href=url;else window.location.href=url;toast(copied?'تم فتح واتساب مباشرة على الرقم المحفوظ ونسخ صورة السند للحافظة؛ الصقها داخل المحادثة.':'تم فتح واتساب مباشرة على الرقم المحفوظ. إذا لم يدعم الجهاز لصق الصورة تلقائياً استخدم زر مشاركة الصورة.','info')}catch(e){if(popup)popup.close();toast(e?.message||'تعذر تجهيز السند.','error')}
   }
+  async function sendReceiptWhatsApp(movementId){return sendVoucherWhatsApp(movementId,'in')}
 
-  function normalizeWhatsAppNumber(phone) {
-    let p=String(phone||'').trim().replace(/[^0-9+]/g,'');
-    if(p.startsWith('+')) return p.slice(1);
-    if(p.startsWith('00')) return p.slice(2);
-    const cc=String(state.settings.whatsappCountryCode||'970').replace(/\D/g,'');
-    if(p.startsWith('0')) return cc+p.slice(1);
-    return p;
-  }
+  function sendVoucherSms(movementId,flow='in'){const m=state.movements.find(x=>x.id===movementId);if(!m)return;const tenant=tenantById(m.tenantId),debt=debtById(m.debtId),phone=String(tenant?.phone||debt?.phone||'').trim().replace(/[^0-9+]/g,'');if(!phone){toast('لا يوجد رقم جوال محفوظ لهذا الحساب.','error');return;}const separator=/iPhone|iPad|iPod/i.test(navigator.userAgent)?'&':'?';window.location.href=`sms:${phone}${separator}body=${encodeURIComponent(voucherText(movementId,flow))}`}
+  function sendReceiptSms(movementId){return sendVoucherSms(movementId,'in')}
 
-  async function sendReceiptWhatsApp(movementId) {
-    const m=state.movements.find(x=>x.id===movementId); if(!m)return;
-    const tenant=tenantById(m.tenantId),debt=debtById(m.debtId);
-    const number=normalizeWhatsAppNumber(tenant?.phone||debt?.phone||'');
-    if(!number){toast('لا يوجد رقم واتساب محفوظ لهذا الحساب. أضف رقم الجوال أولاً.','error');return;}
-    // افتح نافذة فوراً للحفاظ على صلاحية فتح واتساب بعد تجهيز الصورة.
-    const popup=window.open('about:blank','_blank');
-    try{
-      const receipt=await buildReceiptJpg(movementId);
-      if(receipt){
-        downloadBlob(receipt.blob,receipt.fileName);
-      }
-      const url=`https://wa.me/${number}?text=${encodeURIComponent(receiptText(movementId))}`;
-      if(popup) popup.location.href=url; else window.location.href=url;
-      toast('تم تجهيز صورة السند وفتح واتساب على رقم الحساب. أرفق صورة السند التي تم تنزيلها.','info');
-    }catch(e){
-      if(popup) popup.close();
-      toast('تعذر تجهيز سند القبض.','error');
-    }
-  }
+  async function shareVoucherJpg(movementId,flow='in'){const v=await buildVoucherJpg(movementId,flow);if(!v)return;const file=new File([v.blob],v.fileName,{type:'image/jpeg'});if(navigator.share&&(!navigator.canShare||navigator.canShare({files:[file]}))){try{await navigator.share({title:flow==='out'?'سند صرف':'سند قبض',text:voucherText(movementId,flow),files:[file]});return}catch(e){if(e?.name==='AbortError')return}}downloadBlob(v.blob,v.fileName);toast('المشاركة المباشرة غير مدعومة هنا؛ تم تنزيل صورة السند.','info')}
+  async function shareReceiptJpg(movementId){return shareVoucherJpg(movementId,'in')}
 
-  function sendReceiptSms(movementId) {
-    const m=state.movements.find(x=>x.id===movementId); if(!m)return;
-    const tenant=tenantById(m.tenantId),debt=debtById(m.debtId);
-    const phone=String(tenant?.phone||debt?.phone||'').trim().replace(/[^0-9+]/g,'');
-    if(!phone){toast('لا يوجد رقم جوال محفوظ لهذا الحساب.','error');return;}
-    const separator=/iPhone|iPad|iPod/i.test(navigator.userAgent)?'&':'?';
-    window.location.href=`sms:${phone}${separator}body=${encodeURIComponent(receiptText(movementId))}`;
+  function openVoucherActions(movementId,flow='in'){
+    const m=state.movements.find(x=>x.id===movementId);if(!m)return;const isIn=flow!=='out',tenant=tenantById(m.tenantId),debt=debtById(m.debtId),contact=tenant||debt,amounts=CURRENCIES.map(c=>{const u=toUnits(m.amounts?.[c]?.[isIn?'in':'out']||0,c);return u>0n?formatMoney(u,c,true):''}).filter(Boolean).join(' + '),title=isIn?'سند القبض جاهز':'سند الصرف جاهز';
+    const discountInfo=m.type==='rent'&&tenant&&toUnits(m.rentDiscount||0,tenant.rentCurrency)>0n?`<div><small>الخصم</small><strong>${formatMoney(m.rentDiscount,tenant.rentCurrency)}</strong></div>`:'';
+    const {form}=showModal({title,subtitle:contact?`${contact.name}${contact.phone?` — ${contact.phone}`:''}`:'يمكن تنزيل السند أو مشاركته',icon:'i-receipt',hideSubmit:true,body:`<div class="receipt-ready-card"><div><small>رقم السند</small><strong>${escapeHtml(m.receiptNo||m.id)}</strong></div><div><small>${isIn?'المبلغ المقبوض':'المبلغ المصروف'}</small><strong class="${isIn?'money-in':'money-out'}">${escapeHtml(amounts||'—')}</strong></div>${discountInfo}<div><small>التاريخ</small><strong>${dateLabel(m.date)}</strong></div><div><small>طريقة الدفع</small><strong>${paymentMethodLabel(m.paymentMethod)}${m.bankWallet?` — ${escapeHtml(m.bankWallet)}`:''}</strong></div><div><small>المرجع</small><strong>${escapeHtml(m.referenceNo||'—')}</strong></div></div><div class="form-note receipt-note">زر واتساب يفتح المحادثة مباشرة على رقم المستأجر/صاحب الدين المحفوظ حتى لو لم يكن مسجلاً في جهات اتصال الهاتف، ويحاول نسخ صورة السند للحافظة للصقها فوراً.</div>`,extraFooter:`<button class="btn btn-primary" type="button" id="voucherDownloadBtn"><svg class="icon"><use href="#i-download"/></svg>JPG</button><button class="btn btn-primary" type="button" id="voucherShareBtn"><svg class="icon"><use href="#i-share"/></svg>مشاركة الصورة</button>${isIn?'<button class="btn btn-whatsapp" type="button" id="voucherWhatsappBtn">واتساب مباشر</button><button class="btn btn-ghost" type="button" id="voucherSmsBtn">رسالة جوال</button>':''}`});
+    $('#voucherDownloadBtn',form)?.addEventListener('click',()=>exportVoucherJpg(movementId,flow));$('#voucherShareBtn',form)?.addEventListener('click',()=>shareVoucherJpg(movementId,flow));$('#voucherWhatsappBtn',form)?.addEventListener('click',()=>sendVoucherWhatsApp(movementId,flow));$('#voucherSmsBtn',form)?.addEventListener('click',()=>sendVoucherSms(movementId,flow));
   }
-
-  async function shareReceiptJpg(movementId) {
-    const receipt=await buildReceiptJpg(movementId); if(!receipt)return;
-    const file=new File([receipt.blob],receipt.fileName,{type:'image/jpeg'});
-    if(navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))){
-      try{
-        await navigator.share({title:'سند قبض',text:receiptText(movementId),files:[file]});
-        toast('تم فتح المشاركة. اختر واتساب أو التطبيق المطلوب.');
-        return;
-      }catch(e){if(e?.name==='AbortError')return;}
-    }
-    downloadBlob(receipt.blob,receipt.fileName);
-    toast('المشاركة المباشرة غير مدعومة هنا؛ تم تنزيل صورة السند JPG.','info');
-  }
-
-  function openReceiptActions(movementId) {
-    const m=state.movements.find(x=>x.id===movementId); if(!m)return;
-    const tenant=tenantById(m.tenantId),debt=debtById(m.debtId);
-    const contact=tenant||debt;
-    const amounts=CURRENCIES.map(c=>{const u=toUnits(m.amounts?.[c]?.in||0,c);return u>0n?formatMoney(u,c,true):'';}).filter(Boolean).join(' + ');
-    const {form}=showModal({
-      title:'سند القبض جاهز',
-      subtitle:contact?`${contact.name}${contact.phone?` — ${contact.phone}`:''}`:'يمكن تنزيل السند أو مشاركته',
-      icon:'i-receipt',hideSubmit:true,
-      body:`<div class="receipt-ready-card"><div><small>رقم السند</small><strong>${escapeHtml(m.receiptNo||m.id)}</strong></div><div><small>المبلغ المقبوض</small><strong class="money-in">${escapeHtml(amounts||'—')}</strong></div><div><small>التاريخ</small><strong>${dateLabel(m.date)}</strong></div></div><div class="form-note receipt-note">يمكن تنزيل سند القبض JPG أو مشاركته كصورة. زر واتساب يفتح رقم المستأجر/صاحب الدين مع نص السند، وزر رسالة جوال يفتح SMS بالنص نفسه.</div>`,
-      extraFooter:`<button class="btn btn-primary" type="button" id="receiptDownloadBtn"><svg class="icon"><use href="#i-download"/></svg>JPG</button><button class="btn btn-primary" type="button" id="receiptShareBtn"><svg class="icon"><use href="#i-share"/></svg>مشاركة الصورة</button><button class="btn btn-whatsapp" type="button" id="receiptWhatsappBtn">واتساب</button><button class="btn btn-ghost" type="button" id="receiptSmsBtn">رسالة جوال</button>`
-    });
-    $('#receiptDownloadBtn',form)?.addEventListener('click',()=>exportReceiptJpg(movementId));
-    $('#receiptShareBtn',form)?.addEventListener('click',()=>shareReceiptJpg(movementId));
-    $('#receiptWhatsappBtn',form)?.addEventListener('click',()=>sendReceiptWhatsApp(movementId));
-    $('#receiptSmsBtn',form)?.addEventListener('click',()=>sendReceiptSms(movementId));
-  }
+  function openReceiptActions(movementId){return openVoucherActions(movementId,'in')}
+  function openPaymentVoucherActions(movementId){return openVoucherActions(movementId,'out')}
 
   function loadImage(src){return new Promise((res,rej)=>{const img=new Image();img.onload=()=>res(img);img.onerror=rej;img.src=src;});}
   function roundRect(ctx,x,y,w,h,r,fill,stroke){if(w<2*r)r=w/2;if(h<2*r)r=h/2;ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();if(fill)ctx.fill();if(stroke)ctx.stroke();}
@@ -1078,8 +1121,8 @@ ${state.settings.companyName}`;
 
   function exportCsv() {
     const list=reportMovements();
-    const headers=['التاريخ','النوع','البيان','المكان/المستأجر',...CURRENCIES.flatMap(c=>[`${CURRENCY_META[c].label} وارد`,`${CURRENCY_META[c].label} مصروف`]),'ملاحظات'];
-    const rows=list.map(m=>{const t=tenantById(m.tenantId),b=buildingById(m.buildingId);return [m.date,m.type==='rent'?'دفعة مستأجر':'حركة عامة',m.detail||'',t?.name||b?.name||'مركزي',...CURRENCIES.flatMap(c=>[m.amounts?.[c]?.in||'0',m.amounts?.[c]?.out||'0']),m.notes||''];});
+    const headers=['التاريخ','النوع','البيان','المكان/المستأجر',...CURRENCIES.flatMap(c=>[`${CURRENCY_META[c].label} وارد`,`${CURRENCY_META[c].label} مصروف`]),'طريقة الدفع','البنك/المحفظة','رقم المرجع','المنفذ','خصم الإيجار','ملاحظات'];
+    const rows=list.map(m=>{const t=tenantById(m.tenantId),b=buildingById(m.buildingId);return [m.date,m.type==='rent'?'دفعة مستأجر':'حركة عامة',m.detail||'',t?.name||b?.name||'مركزي',...CURRENCIES.flatMap(c=>[m.amounts?.[c]?.in||'0',m.amounts?.[c]?.out||'0']),paymentMethodLabel(m.paymentMethod),m.bankWallet||'',m.referenceNo||'',m.executor||'',m.rentDiscount||'0',m.notes||''];});
     const csv='\ufeff'+[headers,...rows].map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');
     downloadBlob(new Blob([csv],{type:'text/csv;charset=utf-8'}),`shahd-report-${today()}.csv`);toast('تم تصدير التقرير بصيغة CSV.');
   }
@@ -1168,12 +1211,12 @@ ${state.settings.companyName}`;
 
   function applyPermissionUI() {
     const visibility=[
-      ['#quickMovementBtn,#addMovementBtn','movements.create'],['#heroTenantBtn,#addTenantBtn','tenants.create'],['#heroDebtBtn,#addDebtBtn','debts.create'],
+      ['#quickMovementBtn,#addMovementBtn,#quickPaymentVoucherBtn,#addPaymentVoucherBtn','movements.create'],['#heroTenantBtn,#addTenantBtn','tenants.create'],['#heroDebtBtn,#addDebtBtn','debts.create'],
       ['#addProjectBtn','projects.create'],['#addBuildingBtn','buildings.create'],['#syncButton','sync.view'],['#projectEditBtn','projects.edit'],['#projectAddMovementBtn','movements.create'],
       ['#projectAddReceivableBtn,#projectAddPayableBtn','debts.create'],['#exportCsvBtn,#exportArrearsPdfBtn','reports.export'],['#addUserBtn','users.create'],
       ['[data-edit-project]','projects.edit'],['[data-delete-project]','projects.delete'],['[data-edit-building]','buildings.edit'],['[data-delete-building]','buildings.delete'],
-      ['[data-edit-tenant]','tenants.edit'],['[data-delete-tenant]','tenants.delete'],['[data-pay-tenant],[data-pay-arrears]','arrears.collect'],
-      ['[data-arrears-whatsapp],[data-arrears-sms]','arrears.contact'],['[data-edit-movement]','movements.edit'],['[data-delete-movement]','movements.delete'],['[data-receipt]','movements.receipt'],
+      ['[data-edit-tenant]','tenants.edit'],['[data-delete-tenant]','tenants.delete'],['[data-end-tenant]','tenants.end'],['[data-tenant-files],[data-open-tenant-attachment]','tenants.files'],['[data-tenant-statement],[data-building-statement]','reports.view'],['[data-pay-tenant],[data-pay-arrears]','arrears.collect'],
+      ['[data-arrears-whatsapp],[data-arrears-sms]','arrears.contact'],['[data-edit-movement]','movements.edit'],['[data-delete-movement]','movements.delete'],['[data-receipt],[data-payment-voucher]','movements.receipt'],
       ['[data-debt-report]','debts.view'],['[data-edit-debt]','debts.edit'],['[data-delete-debt]','debts.delete'],['[data-debt-payment]','debts.pay'],['[data-edit-user]','users.edit'],['[data-toggle-user]','users.disable']
     ];
     $$('.nav-link[data-view]').forEach(el=>{const perm=PERMISSIONS.viewForRoute?.[el.dataset.view];el.hidden=el.dataset.view==='settings'?false:Boolean(perm&&!can(perm));});
@@ -1181,13 +1224,13 @@ ${state.settings.companyName}`;
     const mobileNav=$('#mobileBottomNav');if(mobileNav){const visible=$$('.mobile-bottom-item[data-mobile-view]').filter(el=>!el.hidden).length;mobileNav.style.setProperty('--mobile-nav-count',String(Math.max(1,visible)));}
     $$('.settings-protected').forEach(el=>el.hidden=!can('settings.view'));
     visibility.forEach(([selector,perm])=>$$(selector).forEach(el=>el.hidden=!can(perm)));
-    if($('#notificationButton')) $('#notificationButton').hidden=!can('arrears.view');
+    if($('#notificationButton')) $('#notificationButton').hidden=!(can('arrears.view')||can('debts.view'));
     const settingsForm=$('#settingsForm');if(settingsForm){const editable=can('settings.edit');$$('input,select,textarea,button[type="submit"]',settingsForm).forEach(el=>el.disabled=!editable);}
     ['#backupBtn','#restoreInput'].forEach(selector=>$$(selector).forEach(el=>{const host=el.closest('label')||el;host.hidden=!can('settings.backup');}));
   }
 
   function guardPermissionClick(e) {
-    const guards=[['[data-edit-project]','projects.edit'],['[data-delete-project]','projects.delete'],['[data-edit-building]','buildings.edit'],['[data-delete-building]','buildings.delete'],['[data-edit-tenant]','tenants.edit'],['[data-delete-tenant]','tenants.delete'],['[data-pay-tenant],[data-pay-arrears]','arrears.collect'],['[data-arrears-whatsapp],[data-arrears-sms]','arrears.contact'],['[data-edit-movement]','movements.edit'],['[data-delete-movement]','movements.delete'],['[data-receipt]','movements.receipt'],['[data-edit-debt]','debts.edit'],['[data-delete-debt]','debts.delete'],['[data-debt-payment]','debts.pay'],['[data-edit-user]','users.edit'],['[data-toggle-user]','users.disable']];
+    const guards=[['[data-edit-project]','projects.edit'],['[data-delete-project]','projects.delete'],['[data-edit-building]','buildings.edit'],['[data-delete-building]','buildings.delete'],['[data-edit-tenant]','tenants.edit'],['[data-delete-tenant]','tenants.delete'],['[data-end-tenant]','tenants.end'],['[data-tenant-files],[data-open-tenant-attachment]','tenants.files'],['[data-tenant-statement],[data-building-statement]','reports.view'],['[data-pay-tenant],[data-pay-arrears]','arrears.collect'],['[data-arrears-whatsapp],[data-arrears-sms]','arrears.contact'],['[data-edit-movement]','movements.edit'],['[data-delete-movement]','movements.delete'],['[data-receipt],[data-payment-voucher]','movements.receipt'],['[data-edit-debt]','debts.edit'],['[data-delete-debt]','debts.delete'],['[data-debt-payment]','debts.pay'],['[data-edit-user]','users.edit'],['[data-toggle-user]','users.disable']];
     for(const [selector,perm] of guards){if(e.target.closest(selector)&&!can(perm)){e.preventDefault();e.stopImmediatePropagation();toast('لا تملك صلاحية تنفيذ هذه العملية.','error');return false;}}
     return true;
   }
@@ -1195,27 +1238,31 @@ ${state.settings.companyName}`;
   function currentArrearsNotifications(){
     if(!can('arrears.view')) return [];
     const cutoff=currentMonth();
-    return state.tenants.map(t=>({tenant:t,...calculateTenantArrears(t,cutoff)})).filter(x=>x.due>0n).sort((a,b)=>Number(b.months?.length||0)-Number(a.months?.length||0));
+    return state.tenants.filter(isTenantActive).map(t=>({tenant:t,...calculateTenantArrears(t,cutoff)})).filter(x=>x.due>0n).sort((a,b)=>Number(b.months?.length||0)-Number(a.months?.length||0));
+  }
+  function currentDebtInstallmentNotifications(){
+    if(!can('debts.view'))return [];
+    return state.debts.map(debt=>({debt,status:debtInstallmentStatus(debt)})).filter(x=>x.status&&(x.status.overdue>0n||x.status.daysUntil<=3)).sort((a,b)=>Number(b.status.overdue>0n)-Number(a.status.overdue>0n)||a.status.daysUntil-b.status.daysUntil);
   }
 
   function updateNotificationBadge(){
-    const btn=$('#notificationButton'),badge=$('#notificationBadge');
-    if(!btn||!badge)return;
-    if(!can('arrears.view')){btn.hidden=true;badge.hidden=true;return;}
-    btn.hidden=false;
-    const rows=currentArrearsNotifications(),count=rows.length;
-    badge.textContent=count>99?'99+':String(count);
-    badge.hidden=count===0;
-    btn.classList.toggle('has-alerts',count>0);
-    btn.title=count?`${count} مستأجر لديهم متأخرات`:'لا توجد متأخرات حالياً';
+    const btn=$('#notificationButton'),badge=$('#notificationBadge');if(!btn||!badge)return;
+    if(!(can('arrears.view')||can('debts.view'))){btn.hidden=true;badge.hidden=true;return;}
+    btn.hidden=false;const a=currentArrearsNotifications(),d=currentDebtInstallmentNotifications(),count=a.length+d.length;
+    badge.textContent=count>99?'99+':String(count);badge.hidden=count===0;btn.classList.toggle('has-alerts',count>0);
+    btn.title=count?`${a.length} متأخرات مستأجرين • ${d.length} مواعيد أقساط`:'لا توجد تنبيهات مستحقة حالياً';
   }
 
   function openNotificationsModal(){
-    if(!requirePermission('arrears.view'))return;
-    const rows=currentArrearsNotifications();
-    const body=rows.length?`<div class="notification-list">${rows.slice(0,30).map(r=>{const t=r.tenant,b=buildingById(t.buildingId);return `<div class="notification-item"><div class="notification-item-main"><strong>${escapeHtml(t.name)}</strong><small>${escapeHtml(b?.name||'بدون عمارة')}${t.direction?` • ${escapeHtml(t.direction)}`:''}<br>${r.months.length} شهر متأخر حتى ${monthLabel(currentMonth())}</small></div><div class="notification-amount">${formatMoney(r.due,r.currency,true)}</div></div>`}).join('')}</div>${rows.length>30?`<div class="form-note" style="margin-top:10px">يوجد ${rows.length-30} تنبيه إضافي. افتح صفحة المتأخرات لعرض الجميع.</div>`:''}`:'<div class="empty">لا توجد متأخرات مستحقة حالياً.</div>';
-    const {close}=showModal({title:'تنبيهات المتأخرات',subtitle:rows.length?`${rows.length} مستأجر يحتاجون متابعة`:'الحسابات محدثة',icon:'i-bell',size:'lg',body,hideSubmit:true,extraFooter:rows.length?'<button class="btn btn-primary" type="button" id="openArrearsFromAlerts">فتح المتأخرات</button>':''});
+    if(!(can('arrears.view')||can('debts.view'))){toast('لا تملك صلاحية عرض التنبيهات.','error');return;}
+    const arrears=currentArrearsNotifications(),installments=currentDebtInstallmentNotifications();
+    const arrearsHtml=arrears.length?`<div class="notification-section"><h4>متأخرات المستأجرين <span>${arrears.length}</span></h4><div class="notification-list">${arrears.slice(0,20).map(r=>{const t=r.tenant,b=buildingById(t.buildingId);return `<div class="notification-item"><div class="notification-item-main"><strong>${escapeHtml(t.name)}</strong><small>${escapeHtml(b?.name||'بدون عمارة')}<br>${r.months.length} شهر متأخر</small></div><div class="notification-amount">${formatMoney(r.due,r.currency,true)}</div></div>`}).join('')}</div></div>`:'';
+    const debtHtml=installments.length?`<div class="notification-section"><h4>أقساط الديون <span>${installments.length}</span></h4><div class="notification-list">${installments.slice(0,20).map(({debt,status})=>`<div class="notification-item"><div class="notification-item-main"><strong>${escapeHtml(debt.name)}</strong><small>${debt.direction==='payable'?'دين علينا':'دين لنا'} • القسط ${formatMoney(status.installment,status.currency,true)} • يوم ${status.dueDay} شهرياً<br>${status.overdue>0n?`متأخر الآن: ${formatMoney(status.overdue,status.currency,true)}`:`الاستحقاق القادم: ${dateLabel(status.nextDate)}`}</small></div><div class="notification-amount">${status.overdue>0n?'متأخر':`خلال ${status.daysUntil} يوم`}</div></div>`).join('')}</div></div>`:'';
+    const body=arrearsHtml+debtHtml||'<div class="empty">لا توجد متأخرات أو أقساط مستحقة حالياً.</div>';
+    const actions=`${arrears.length&&can('arrears.view')?'<button class="btn btn-primary" type="button" id="openArrearsFromAlerts">المتأخرات</button>':''}${installments.length&&can('debts.view')?'<button class="btn btn-ghost" type="button" id="openDebtsFromAlerts">الديون</button>':''}`;
+    const {close}=showModal({title:'التنبيهات المالية',subtitle:`${arrears.length} متأخرات • ${installments.length} أقساط تحتاج متابعة`,icon:'i-bell',size:'lg',body,hideSubmit:true,extraFooter:actions});
     $('#openArrearsFromAlerts')?.addEventListener('click',()=>{close();setTimeout(()=>navigate('arrears'),190);});
+    $('#openDebtsFromAlerts')?.addEventListener('click',()=>{close();setTimeout(()=>navigate('debts'),190);});
   }
 
   function formatBytes(bytes){const n=Number(bytes||0);if(n<1024)return `${n} B`;if(n<1048576)return `${(n/1024).toFixed(1)} KB`;if(n<1073741824)return `${(n/1048576).toFixed(1)} MB`;return `${(n/1073741824).toFixed(2)} GB`;}
@@ -1248,6 +1295,11 @@ ${state.settings.companyName}`;
       const eb=e.target.closest('[data-edit-building]');if(eb)openBuildingModal(eb.dataset.editBuilding);
       const db=e.target.closest('[data-delete-building]');if(db)deleteBuilding(db.dataset.deleteBuilding);
       const et=e.target.closest('[data-edit-tenant]');if(et)openTenantModal(et.dataset.editTenant);
+      const endt=e.target.closest('[data-end-tenant]');if(endt)endTenantContract(endt.dataset.endTenant);
+      const tf=e.target.closest('[data-tenant-files]');if(tf)openTenantFilesModal(tf.dataset.tenantFiles);
+      const ta=e.target.closest('[data-open-tenant-attachment]');if(ta){const t=tenantById(ta.dataset.openTenantAttachment),meta=ta.dataset.attachmentKind==='contract'?t?.contractAttachment:t?.identityAttachment;if(meta)window.ShahdMedia?.openAttachment?.(meta);}
+      const ts=e.target.closest('[data-tenant-statement]');if(ts)openEntityStatement('tenant',ts.dataset.tenantStatement);
+      const bs=e.target.closest('[data-building-statement]');if(bs)openEntityStatement('building',bs.dataset.buildingStatement);
       const dt=e.target.closest('[data-delete-tenant]');if(dt)deleteTenant(dt.dataset.deleteTenant);
       const pt=e.target.closest('[data-pay-tenant]');if(pt)openMovementModal(null,{type:'rent',tenantId:pt.dataset.payTenant});
       const pa=e.target.closest('[data-pay-arrears]');if(pa)openMovementModal(null,{type:'rent',tenantId:pa.dataset.payArrears,rentMonth:pa.dataset.firstMonth});
@@ -1256,6 +1308,7 @@ ${state.settings.companyName}`;
       const em=e.target.closest('[data-edit-movement]');if(em){const m=state.movements.find(x=>x.id===em.dataset.editMovement);if(m?.debtPaymentId)toast('هذه الحركة مرتبطة بدين. عدّل الدين أو سجّل العملية من شاشة الديون.','info');else openMovementModal(em.dataset.editMovement);}
       const dm=e.target.closest('[data-delete-movement]');if(dm){const m=state.movements.find(x=>x.id===dm.dataset.deleteMovement);if(m?.debtPaymentId)toast('هذه الحركة مرتبطة بسداد/تحصيل دين ولا تُحذف منفردة للحفاظ على دقة الحسابات.','error');else deleteMovement(dm.dataset.deleteMovement);}
       const rc=e.target.closest('[data-receipt]');if(rc)openReceiptActions(rc.dataset.receipt);
+      const pv=e.target.closest('[data-payment-voucher]');if(pv)openPaymentVoucherActions(pv.dataset.paymentVoucher);
       const ed=e.target.closest('[data-edit-debt]');if(ed)openDebtModal(ed.dataset.editDebt);
       const dd=e.target.closest('[data-delete-debt]');if(dd)deleteDebt(dd.dataset.deleteDebt);
       const dr=e.target.closest('[data-debt-report]');if(dr)openDebtDetailedReport(dr.dataset.debtReport);
@@ -1266,13 +1319,13 @@ ${state.settings.companyName}`;
       const eu=e.target.closest('[data-edit-user]');if(eu)openUserModal(eu.dataset.editUser);
       const tu=e.target.closest('[data-toggle-user]');if(tu)toggleCompanyUser(tu.dataset.toggleUser,tu.dataset.userActive==='1');
     });
-    $('#quickMovementBtn').addEventListener('click',withPermission('movements.create',()=>openMovementModal()));$('#addMovementBtn').addEventListener('click',withPermission('movements.create',()=>openMovementModal()));
+    $('#quickMovementBtn').addEventListener('click',withPermission('movements.create',()=>openMovementModal()));$('#addMovementBtn').addEventListener('click',withPermission('movements.create',()=>openMovementModal()));$('#quickPaymentVoucherBtn').addEventListener('click',withPermission('movements.create',()=>openMovementModal(null,{flow:'out'})));$('#addPaymentVoucherBtn').addEventListener('click',withPermission('movements.create',()=>openMovementModal(null,{flow:'out'})));
     $('#heroTenantBtn').addEventListener('click',withPermission('tenants.create',()=>openTenantModal()));$('#heroDebtBtn').addEventListener('click',withPermission('debts.create',()=>openDebtModal()));
     $('#addProjectBtn').addEventListener('click',withPermission('projects.create',()=>openProjectModal()));$('#projectSearch').addEventListener('input',renderProjects);
     $('#projectEditBtn').addEventListener('click',withPermission('projects.edit',()=>{if(activeProjectId)openProjectModal(activeProjectId);}));$('#projectAddMovementBtn').addEventListener('click',withPermission('movements.create',()=>{if(activeProjectId)openMovementModal(null,{projectId:activeProjectId});}));$('#projectAddReceivableBtn').addEventListener('click',withPermission('debts.create',()=>{if(activeProjectId)openDebtModal(null,{projectId:activeProjectId,direction:'receivable'});}));$('#projectAddPayableBtn').addEventListener('click',withPermission('debts.create',()=>{if(activeProjectId)openDebtModal(null,{projectId:activeProjectId,direction:'payable'});}));
     $('#projectTabs').addEventListener('click',e=>{const t=e.target.closest('[data-project-tab]');if(t){activeProjectTab=t.dataset.projectTab;renderProjectDetails();}});
     $('#addBuildingBtn').addEventListener('click',withPermission('buildings.create',()=>openBuildingModal()));$('#addTenantBtn').addEventListener('click',withPermission('tenants.create',()=>openTenantModal()));$('#addDebtBtn').addEventListener('click',withPermission('debts.create',()=>openDebtModal()));
-    $('#buildingSearch').addEventListener('input',renderBuildings);$('#tenantSearch').addEventListener('input',renderTenants);$('#tenantBuildingFilter').addEventListener('change',renderTenants);
+    $('#buildingSearch').addEventListener('input',renderBuildings);$('#tenantSearch').addEventListener('input',renderTenants);$('#tenantBuildingFilter').addEventListener('change',renderTenants);$('#tenantTabs').addEventListener('click',e=>{const t=e.target.closest('[data-tenant-tab]');if(t){activeTenantTab=t.dataset.tenantTab;renderTenants();}});
     ['movementDateFrom','movementDateTo','movementTypeFilter','movementProjectFilter'].forEach(id=>$(`#${id}`).addEventListener('change',renderMovements));
     $('#arrearsCutoff').value=currentMonth();$('#arrearsCutoff').addEventListener('change',()=>{renderArrears();renderReports();});$('#arrearsBuildingFilter').addEventListener('change',renderArrears);$('#refreshArrearsBtn').addEventListener('click',renderArrears);$('#exportArrearsPdfBtn').addEventListener('click',withPermission('reports.export',exportArrearsPdf));
     $('#debtTabs').addEventListener('click',e=>{const t=e.target.closest('[data-debt-tab]');if(t){activeDebtTab=t.dataset.debtTab;renderDebts();}});
@@ -1287,20 +1340,26 @@ ${state.settings.companyName}`;
     window.ShahdCloud.queueCount().then(count=>updateSyncStatus({count,online:navigator.onLine!==false}));
     window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstallPrompt=e;});
     window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;toast('تم تثبيت التطبيق على الجهاز.');});
+    window.addEventListener('shahd:media-uploaded',e=>{const d=e.detail||{};if(d.ownerType!=='tenant'||!d.ownerId)return;const t=tenantById(d.ownerId);if(!t)return;if(d.kind==='contract')t.contractAttachment=d.meta;if(d.kind==='identity')t.identityAttachment=d.meta;saveState();renderTenants();});
+    window.addEventListener('online',()=>window.ShahdMedia?.syncPending?.());
     document.addEventListener('keydown',e=>{if(e.key==='Escape'){const closeBtn=$('#modalClose');if(closeBtn)closeBtn.click();else closeSidebar();}});
   }
 
   function initPwa() {
-    if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(reg=>reg.update().catch(()=>{})).catch(err=>console.warn('SW',err)));}
+    if(!('serviceWorker' in navigator))return;
+    const register=()=>navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(reg=>reg.update().catch(()=>{})).catch(err=>console.warn('SW',err));
+    if(document.readyState==='loading')window.addEventListener('DOMContentLoaded',register,{once:true});else register();
+    navigator.storage?.persist?.().catch(()=>{});
   }
 
   async function boot() {
     applyTheme();
+    initPwa();
     const cloud = await window.ShahdCloud.start(cloneDefaults);
     state = { ...cloneDefaults(), ...(cloud?.state || {}) };
     state.settings = { ...defaults.settings, ...(state.settings || {}) };
     if(!can(PERMISSIONS.viewForRoute?.dashboard)){const first=Object.entries(PERMISSIONS.viewForRoute||{}).find(([view,perm])=>view!=='project-details'&&can(perm));if(first)activeView=first[0];}
-    bindEvents(); navigate(activeView); initPwa();
+    bindEvents(); navigate(activeView);
     window.addEventListener('shahd:state-remote', e => {
       if (!e.detail?.state) return;
       state = { ...cloneDefaults(), ...e.detail.state, settings:{...defaults.settings,...(e.detail.state.settings||{})} };
